@@ -1,0 +1,35 @@
+{
+  "git_sha": "5848fe4b0e99e4b26cb3d80da4dacc656df63a88",
+  "git_branch": "master",
+  "git_dirty": true,
+  "timestamp_utc": "2026-09-03T15:10:32.657751+00:00",
+  "python": "3.12.3",
+  "numpy": "2.1.0",
+  "scipy": "1.17.1",
+  "mpmath": "1.3.0",
+  "platform": "Linux 6.17.0-1021-nvidia aarch64",
+  "precision": "fp64 + mpmath dps=50",
+  "driver": "run_p5_neural.pilot",
+  "quick": false,
+  "candidates": [
+    [
+      64,
+      4
+    ],
+    [
+      128,
+      5
+    ]
+  ],
+  "chosen": [
+    128,
+    5
+  ],
+  "n_seeds": 4,
+  "modes": 2,
+  "iters": 20000,
+  "selection_rule": "smallest arch with mode-1 median e_lam <= 0.001",
+  "selection_note": "no candidate met the pre-specified e_lam median <= 0.001; the largest candidate is taken and the failure is recorded (plan §9)",
+  "excluded_from_inference": "pilot cells fix the architecture and are not reported as benchmark outcomes",
+  "added": "2026-09-03, P5 확장(사전규정 초안 기준)"
+}

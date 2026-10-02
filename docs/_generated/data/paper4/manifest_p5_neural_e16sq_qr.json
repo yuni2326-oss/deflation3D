@@ -1,0 +1,123 @@
+{
+  "git_sha": "942585bf71b95b2935c641cacaf9cb7b0fe55609",
+  "git_branch": "unknown",
+  "git_dirty": true,
+  "timestamp_utc": "2026-10-02T05:41:42.318643+00:00",
+  "python": "3.12.3",
+  "numpy": "2.1.0",
+  "scipy": "1.17.1",
+  "mpmath": "1.3.0",
+  "platform": "Linux 6.17.0-1026-nvidia aarch64",
+  "precision": "fp64 + mpmath dps=50",
+  "driver": "run_p5_neural.grid_v2",
+  "quick": false,
+  "tag": "e16sq_qr",
+  "launch": {
+    "git_sha": "942585bf71b95b2935c641cacaf9cb7b0fe55609",
+    "git_dirty": false,
+    "timestamp_utc": "2026-10-01T18:40:51.548186+00:00"
+  },
+  "input_scaling": "raw",
+  "geometry": {
+    "L": 1.0,
+    "b": 0.1,
+    "h": 0.1,
+    "E": 1.0,
+    "rho": 1.0,
+    "nu": 0.29
+  },
+  "bc": "clamped_x0",
+  "reference": "p5_reference_e16_square",
+  "reference_level": [
+    48,
+    12,
+    12
+  ],
+  "pair_scoring": true,
+  "clusters": [
+    [
+      1,
+      2
+    ],
+    [
+      3,
+      4
+    ],
+    [
+      5
+    ],
+    [
+      6
+    ]
+  ],
+  "mc_points": null,
+  "mc_resample_every": null,
+  "storage": "raw",
+  "batch_diag": false,
+  "fixed_train_grid": null,
+  "arms": [
+    "qr"
+  ],
+  "control": false,
+  "n_modes": 6,
+  "n_seeds": 20,
+  "iters": 20000,
+  "architecture": [
+    128,
+    5
+  ],
+  "audit_grid": [
+    30,
+    14,
+    14
+  ],
+  "check_quadrature_grid": [
+    40,
+    19,
+    19
+  ],
+  "family_axes": [
+    [
+      16,
+      17,
+      18,
+      19,
+      20
+    ],
+    [
+      7,
+      8,
+      9
+    ],
+    [
+      7,
+      8,
+      9
+    ]
+  ],
+  "train_grid": "resampled Gauss family, redrawn every 250 iterations",
+  "control_condition": "arm (b) trained on the audit grid itself, so the resampling effect is a measured contrast rather than an assumption",
+  "tau": 0.5,
+  "rayleigh_tol": 1e-06,
+  "classification_order": [
+    "invalid_quadrature",
+    "correct",
+    "lower_mode_basin",
+    "spurious",
+    "non_converged"
+  ],
+  "gate": "max relative change between consecutive audit-grid snapshots over the final 10 %, below tau; the training objective is not read because resampling makes it jump",
+  "invalid_arm_limit": 0.2,
+  "verdicts": {
+    "p5_neural_3d[qr projection]": {
+      "p_invalid": 0.0,
+      "primary_result": "usable"
+    }
+  },
+  "not_run": [
+    "fp32 axis",
+    "budget control",
+    "initialization ladder"
+  ],
+  "added": "2026-09-06, v2 pre-specification"
+}

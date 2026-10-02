@@ -1,0 +1,29 @@
+{
+  "git_sha": "5848fe4b0e99e4b26cb3d80da4dacc656df63a88",
+  "git_branch": "master",
+  "git_dirty": true,
+  "timestamp_utc": "2026-09-03T17:22:24.287448+00:00",
+  "python": "3.12.3",
+  "numpy": "2.1.0",
+  "scipy": "1.17.1",
+  "mpmath": "1.3.0",
+  "platform": "Linux 6.17.0-1021-nvidia aarch64",
+  "precision": "fp64 + mpmath dps=50",
+  "driver": "run_p5_neural.stage0",
+  "quick": false,
+  "arm": "p5_neural_3d[exact projection]",
+  "n_seeds": 8,
+  "modes": 4,
+  "iters": 20000,
+  "architecture": [
+    128,
+    5
+  ],
+  "threshold_branch_a": 0.1,
+  "threshold_branch_b": 0.01,
+  "branch": "A",
+  "decision_basis": "k=2 0.0205 was intermediate; deeper k reached 0.6697 >= 0.1",
+  "measured_on": "the raw stored outputs handed to each stage, before any projection; measuring the projected span would always look orthogonal and the question would vanish",
+  "comparison": "P1 had max off-diag 0.991 at k = 2; P4 had 2.2e-16",
+  "added": "2026-09-03, P5 확장(사전규정 초안 기준)"
+}

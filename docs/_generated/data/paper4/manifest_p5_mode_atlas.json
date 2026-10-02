@@ -1,0 +1,34 @@
+{
+  "git_sha": "eef58690b621c21cfdee1b9866a4d6640d2a6e73",
+  "git_branch": "master",
+  "git_dirty": false,
+  "timestamp_utc": "2026-09-30T03:19:42.743135+00:00",
+  "python": "3.12.3",
+  "numpy": "2.1.0",
+  "scipy": "1.17.1",
+  "mpmath": "1.3.0",
+  "platform": "Linux 6.17.0-1026-nvidia aarch64",
+  "precision": "fp64 + mpmath dps=50",
+  "driver": "run_p5.mode_atlas",
+  "level": [
+    48,
+    16,
+    8
+  ],
+  "check_level": [
+    24,
+    8,
+    4
+  ],
+  "render_grid": [
+    49,
+    9,
+    3
+  ],
+  "structures": [
+    "baseline",
+    "e13a_thick",
+    "e13b_clamped2"
+  ],
+  "sign": "each mode normalised so its largest-magnitude component is positive"
+}

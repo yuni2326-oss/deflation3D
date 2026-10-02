@@ -1,0 +1,75 @@
+{
+  "git_sha": "5848fe4b0e99e4b26cb3d80da4dacc656df63a88",
+  "git_branch": "master",
+  "git_dirty": true,
+  "timestamp_utc": "2026-09-03T14:11:33.553561+00:00",
+  "python": "3.12.3",
+  "numpy": "2.5.0",
+  "scipy": "1.18.0",
+  "mpmath": "1.3.0",
+  "platform": "Linux 6.17.0-1021-nvidia aarch64",
+  "precision": "fp64 + mpmath dps=50",
+  "driver": "run_p5.main",
+  "geometry": {
+    "L": 1.0,
+    "b": 0.2,
+    "h": 0.04,
+    "E": 1.0,
+    "rho": 1.0,
+    "nu": 0.29
+  },
+  "ladder": [
+    [
+      12,
+      4,
+      2
+    ],
+    [
+      24,
+      8,
+      4
+    ],
+    [
+      48,
+      16,
+      8
+    ]
+  ],
+  "quick": false,
+  "dof_per_level": [
+    3240,
+    22032,
+    161568
+  ],
+  "solver_per_level": [
+    "dense",
+    "sparse",
+    "sparse"
+  ],
+  "n_modes_reference": 8,
+  "n_modes_used": 6,
+  "quadrature_grid": [
+    16,
+    8,
+    6
+  ],
+  "quadrature_tol": 1e-06,
+  "quadrature_reference_grid": [
+    96,
+    40,
+    24
+  ],
+  "worst_extrapolation_residual": 0.0009562079987647949,
+  "worst_self_mac": 0.9999684406497964,
+  "shape_certified": true,
+  "gap_rule": 0.01,
+  "n_modes_scored_as_pair": 0,
+  "reference_note": "Λ* is the Richardson extrapolant of the three-level ladder; the quoted uncertainty is the relative extrapolation step |Λ_finest − Λ*|/|Λ*| and is not a statistical interval",
+  "quadrature_note": "the grid is certified against a smooth manufactured field, not against a FEM mode: a global tensor grid cannot integrate a C0 FEM strain field to 1e-6 because the strain is discontinuous across element faces (the 3D analogue of the P1 break-point alignment requirement)",
+  "not_run": [
+    "neural arms",
+    "Stage 0 branch decision",
+    "main grid"
+  ],
+  "added": "2026-09-03, P5 확장(사전규정 초안 기준)"
+}

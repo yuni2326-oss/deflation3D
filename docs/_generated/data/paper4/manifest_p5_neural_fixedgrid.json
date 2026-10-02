@@ -1,0 +1,45 @@
+{
+  "git_sha": "5848fe4b0e99e4b26cb3d80da4dacc656df63a88",
+  "git_branch": "master",
+  "git_dirty": true,
+  "timestamp_utc": "2026-09-04T14:09:59.528767+00:00",
+  "python": "3.12.3",
+  "numpy": "2.1.0",
+  "scipy": "1.17.1",
+  "mpmath": "1.3.0",
+  "platform": "Linux 6.17.0-1021-nvidia aarch64",
+  "precision": "fp64 + mpmath dps=50",
+  "driver": "run_p5_neural.grid",
+  "quick": false,
+  "branch": "A",
+  "arms": [
+    "diagonal",
+    "exact",
+    "qr"
+  ],
+  "n_modes": 6,
+  "n_seeds": 20,
+  "iters": 20000,
+  "architecture": [
+    128,
+    5
+  ],
+  "quadrature_grid": [
+    16,
+    8,
+    6
+  ],
+  "check_quadrature_grid": [
+    40,
+    20,
+    15
+  ],
+  "quadrature_separation": "every cell is re-measured on a second quadrature order and the relative drift is reported; a large drift means the optimizer found a strain field the certified grid does not resolve, so that cell's Lam is a quadrature artifact rather than a Rayleigh quotient",
+  "scoring": "unchanged from P1-P4: MAC >= 0.9, e_lam <= 0.05, four outcomes, 95 % Wilson; the seed count is 20 rather than 50, so the intervals are wider and the captions say so",
+  "not_run": [
+    "budget control",
+    "initialization ladder",
+    "fp32 axis"
+  ],
+  "added": "2026-09-03, P5 확장(사전규정 초안 기준)"
+}

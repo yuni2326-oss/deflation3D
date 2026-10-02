@@ -1,0 +1,25 @@
+problem,arm,condition,mode,n,correct,basin,accuracy_shortfall,higher_mode,unrecognizable,non_converged,invalid_quadrature,acc_above_reference,acc_mac_min,acc_e_lam_min,acc_e_lam_max
+P5,p5_neural_3d[diagonal projection],resampled,1,20,20,0,0,0,0,0,0,0,nan,nan,nan
+P5,p5_neural_3d[diagonal projection],resampled,2,20,18,0,1,0,0,1,0,1,0.9977721821743701,1.925366442671463,1.925366442671463
+P5,p5_neural_3d[diagonal projection],resampled,3,20,15,0,3,0,0,2,0,3,0.9147928542267347,0.06281110132725129,30.615904720267974
+P5,p5_neural_3d[diagonal projection],resampled,4,20,0,20,0,0,0,0,0,0,nan,nan,nan
+P5,p5_neural_3d[diagonal projection],resampled,5,20,0,18,0,0,0,2,0,0,nan,nan,nan
+P5,p5_neural_3d[diagonal projection],resampled,6,20,0,20,0,0,0,0,0,0,nan,nan,nan
+P5,p5_neural_3d[exact projection],resampled,1,20,18,0,2,0,0,0,0,2,0.9999862409781016,0.061673404496987924,0.07437121964802008
+P5,p5_neural_3d[exact projection],resampled,2,20,17,0,3,0,0,0,0,3,0.9949136004034095,0.09263842144788154,18.998491011785774
+P5,p5_neural_3d[exact projection],resampled,3,20,16,0,2,0,0,2,0,2,0.9693145831001222,4.5033500462486495,25.837221255286245
+P5,p5_neural_3d[exact projection],resampled,4,20,6,0,11,0,2,1,0,11,0.9972939447886853,0.054775778918736605,0.9456766516567442
+P5,p5_neural_3d[exact projection],resampled,5,20,6,2,2,3,6,1,0,2,0.9770087428308499,0.17546736528960866,0.36270588608507165
+P5,p5_neural_3d[exact projection],resampled,6,20,4,1,5,0,3,7,0,5,0.933266643085986,0.061897042195208814,0.2773430214130351
+P5,p5_neural_3d[qr projection],resampled,1,20,20,0,0,0,0,0,0,0,nan,nan,nan
+P5,p5_neural_3d[qr projection],resampled,2,20,20,0,0,0,0,0,0,0,nan,nan,nan
+P5,p5_neural_3d[qr projection],resampled,3,20,18,0,1,0,1,0,0,1,0.9998127608950715,0.07445920460444938,0.07445920460444938
+P5,p5_neural_3d[qr projection],resampled,4,20,6,0,10,0,0,4,0,10,0.9996282551969805,0.0523981613697514,0.08598981155455447
+P5,p5_neural_3d[qr projection],resampled,5,20,10,0,1,1,1,7,0,1,0.9054329365458206,9.451908793391938,9.451908793391938
+P5,p5_neural_3d[qr projection],resampled,6,20,7,2,1,0,4,6,0,1,0.9996767271244891,0.08617699335367056,0.08617699335367056
+P5,p5_neural_3d[exact projection],fixed_audit,1,20,20,0,0,0,0,0,0,0,nan,nan,nan
+P5,p5_neural_3d[exact projection],fixed_audit,2,20,20,0,0,0,0,0,0,0,nan,nan,nan
+P5,p5_neural_3d[exact projection],fixed_audit,3,20,19,0,1,0,0,0,0,1,0.9998025511458057,0.07135620749857,0.07135620749857
+P5,p5_neural_3d[exact projection],fixed_audit,4,20,15,0,5,0,0,0,0,5,0.9997655508675751,0.05303386277917308,0.11835795142388995
+P5,p5_neural_3d[exact projection],fixed_audit,5,20,17,0,0,0,2,0,1,0,nan,nan,nan
+P5,p5_neural_3d[exact projection],fixed_audit,6,20,13,3,1,0,2,0,1,0,0.9982033951823253,0.050423381296698606,0.050423381296698606

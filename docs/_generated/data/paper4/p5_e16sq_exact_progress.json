@@ -1,0 +1,10 @@
+{
+  "tag": "e16sq_exact",
+  "condition": "resampled",
+  "modes_done": 6,
+  "complete": true,
+  "elapsed_hours": 11.044222821659512,
+  "updated_utc": "2026-10-01T18:39:53.658105+00:00",
+  "complete_means": "이 진행 파일이 가리키는 arm이 정규 산출물에 기록됐다는 뜻이다. 여러 arm을 한 프로세스에서 돌리면 arm마다 켜졌다 꺼진다.",
+  "note": "곁가지 기록 — 판정은 완결된 arm의 정규 산출물로만 한다"
+}

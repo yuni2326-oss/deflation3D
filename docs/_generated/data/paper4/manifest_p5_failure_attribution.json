@@ -1,0 +1,33 @@
+{
+  "git_sha": "f2c8ab3122d884c4f7262d038f0fa248e4aad61c",
+  "git_branch": "master",
+  "git_dirty": true,
+  "timestamp_utc": "2026-09-10T04:08:34.620867+00:00",
+  "python": "3.12.3",
+  "numpy": "2.5.0",
+  "scipy": "1.18.0",
+  "mpmath": "1.3.0",
+  "platform": "Linux 6.17.0-1021-nvidia aarch64",
+  "precision": "fp64 + mpmath dps=50",
+  "driver": "run_p5_neural.failure_attribution",
+  "source": "p5_neural_v2_records.jsonl",
+  "n_records": 480,
+  "posthoc": true,
+  "prespecification": "unchanged — v2 §6 keeps MAC >= 0.9 and e_lam <= 0.05; the primary result is the 0.05 row",
+  "failure_forms": [
+    "basin",
+    "accuracy_shortfall",
+    "higher_mode",
+    "unrecognizable",
+    "non_converged",
+    "invalid_quadrature"
+  ],
+  "form_rule": "spurious splits three ways; the MAC gate is read first because a cell whose shape matches no reference mode cannot be said to have captured any particular one",
+  "sensitivity_thresholds": [
+    0.05,
+    0.075,
+    0.1,
+    0.15
+  ],
+  "added": "2026-09-10, post-submission P5 analysis"
+}

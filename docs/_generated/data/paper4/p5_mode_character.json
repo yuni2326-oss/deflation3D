@@ -1,0 +1,288 @@
+{
+  "level": [
+    48,
+    16,
+    8
+  ],
+  "check_level": [
+    24,
+    8,
+    4
+  ],
+  "render_grid": [
+    49,
+    9,
+    3
+  ],
+  "fraction_grid": [
+    24,
+    12,
+    10
+  ],
+  "fraction_definition": "mass-weighted: int rho u_c^2 / int rho |u|^2",
+  "character_rule": "z-dominant modes split by width-wise symmetry of u_z (> +0.5 bending, < -0.5 torsion); undefined (null) for y- and x-dominant modes, whose u_z vanishes on the mid-thickness plane by symmetry",
+  "start_vector": "ones",
+  "structures": {
+    "baseline": {
+      "geometry": {
+        "L": 1.0,
+        "b": 0.2,
+        "h": 0.04,
+        "E": 1.0,
+        "rho": 1.0,
+        "nu": 0.29
+      },
+      "faces": "x0",
+      "modes": [
+        {
+          "mode": 1,
+          "lam_fem": 0.0016771387114613086,
+          "lam_star": 0.0016755365495313408,
+          "fx": 0.0006220251169859335,
+          "fy": 3.0670851989860693e-07,
+          "fz": 0.9993776681744942,
+          "self_mac_levels": 0.9999999158771701,
+          "dominant": "z",
+          "width_symmetry": 0.9999999999999999,
+          "character": "bending"
+        },
+        {
+          "mode": 2,
+          "lam_fem": 0.03907824288399014,
+          "lam_star": 0.039047574606016586,
+          "fx": 0.014002441716244632,
+          "fy": 0.9859971440992751,
+          "fz": 4.141844803418045e-07,
+          "self_mac_levels": 0.9999999319934167,
+          "dominant": "y",
+          "width_symmetry": null,
+          "character": "lateral"
+        },
+        {
+          "mode": 3,
+          "lam_fem": 0.06483644297972545,
+          "lam_star": 0.06479571476530081,
+          "fx": 0.004255276507470233,
+          "fy": 1.2109476928942525e-05,
+          "fz": 0.9957326140156008,
+          "self_mac_levels": 0.9999992523559708,
+          "dominant": "z",
+          "width_symmetry": 1.0000000000000002,
+          "character": "bending"
+        },
+        {
+          "mode": 4,
+          "lam_fem": 0.14083018848365247,
+          "lam_star": 0.14076777615828187,
+          "fx": 0.0002715209739469722,
+          "fy": 0.038395713181790976,
+          "fz": 0.961332765844262,
+          "self_mac_levels": 0.9999997861292972,
+          "dominant": "z",
+          "width_symmetry": -1.0,
+          "character": "torsion"
+        },
+        {
+          "mode": 5,
+          "lam_fem": 0.4980455029473726,
+          "lam_star": 0.4978004730893221,
+          "fx": 0.009754231842374481,
+          "fy": 8.121075830530486e-05,
+          "fz": 0.9901645573993202,
+          "self_mac_levels": 0.999997183265255,
+          "dominant": "z",
+          "width_symmetry": 1.0000000000000002,
+          "character": "bending"
+        },
+        {
+          "mode": 6,
+          "lam_fem": 1.1409612669105142,
+          "lam_star": 1.1402859810433306,
+          "fx": 0.07171254756370612,
+          "fy": 0.9282774246799879,
+          "fz": 1.0027756306053403e-05,
+          "self_mac_levels": 0.9999995661477533,
+          "dominant": "y",
+          "width_symmetry": null,
+          "character": "lateral"
+        }
+      ],
+      "dof": 161568,
+      "solver": "sparse"
+    },
+    "e13a_thick": {
+      "geometry": {
+        "L": 1.0,
+        "b": 0.2,
+        "h": 0.1,
+        "E": 1.0,
+        "rho": 1.0,
+        "nu": 0.29
+      },
+      "faces": "x0",
+      "modes": [
+        {
+          "mode": 1,
+          "lam_fem": 0.010307245903264577,
+          "lam_star": 0.010301008117401292,
+          "fx": 0.0037963327946255536,
+          "fy": 2.1693566983006126e-06,
+          "fz": 0.9962014978486762,
+          "self_mac_levels": 0.9999999527044076,
+          "dominant": "z",
+          "width_symmetry": 0.9999999999999998,
+          "character": "bending"
+        },
+        {
+          "mode": 2,
+          "lam_fem": 0.03920542801859294,
+          "lam_star": 0.03918525388258514,
+          "fx": 0.014021298200103931,
+          "fy": 0.98597626187653,
+          "fz": 2.4399233660908155e-06,
+          "self_mac_levels": 0.9999999608333107,
+          "dominant": "y",
+          "width_symmetry": null,
+          "character": "lateral"
+        },
+        {
+          "mode": 3,
+          "lam_fem": 0.37062445845929876,
+          "lam_star": 0.37045434839770564,
+          "fx": 0.02389407338823913,
+          "fy": 7.450869793185325e-05,
+          "fz": 0.9760314179138291,
+          "self_mac_levels": 0.9999995989164405,
+          "dominant": "z",
+          "width_symmetry": 0.9999999999999998,
+          "character": "bending"
+        },
+        {
+          "mode": 4,
+          "lam_fem": 0.5476059520021499,
+          "lam_star": 0.5475319136118801,
+          "fx": 0.0005504458096084736,
+          "fy": 0.19921091796297355,
+          "fz": 0.800238636227418,
+          "self_mac_levels": 0.9999999219919482,
+          "dominant": "z",
+          "width_symmetry": -1.0,
+          "character": "torsion"
+        },
+        {
+          "mode": 5,
+          "lam_fem": 1.1434901768160124,
+          "lam_star": 1.1430213199106216,
+          "fx": 0.07174342328361948,
+          "fy": 0.9281968229617977,
+          "fz": 5.975375458273121e-05,
+          "self_mac_levels": 0.9999997334346898,
+          "dominant": "y",
+          "width_symmetry": null,
+          "character": "lateral"
+        },
+        {
+          "mode": 6,
+          "lam_fem": 2.485962250149749,
+          "lam_star": 2.485474062919688,
+          "fx": 0.9991755501775875,
+          "fy": 0.0006536153203701822,
+          "fz": 0.00017083450204232958,
+          "self_mac_levels": 0.9999999365485925,
+          "dominant": "x",
+          "width_symmetry": null,
+          "character": "axial"
+        }
+      ],
+      "dof": 161568,
+      "solver": "sparse"
+    },
+    "e13b_clamped2": {
+      "geometry": {
+        "L": 1.0,
+        "b": 0.2,
+        "h": 0.04,
+        "E": 1.0,
+        "rho": 1.0,
+        "nu": 0.29
+      },
+      "faces": "two_face",
+      "modes": [
+        {
+          "mode": 1,
+          "lam_fem": 0.06761178328247316,
+          "lam_star": 0.06751859783151655,
+          "fx": 0.0015841913555107831,
+          "fy": 8.043803764004718e-06,
+          "fz": 0.9984077648407254,
+          "self_mac_levels": 0.9999994696087287,
+          "dominant": "z",
+          "width_symmetry": 1.0,
+          "character": "bending"
+        },
+        {
+          "mode": 2,
+          "lam_fem": 0.4995889280567726,
+          "lam_star": 0.4990567490262979,
+          "fx": 0.005674305176084708,
+          "fy": 5.7458939140405164e-05,
+          "fz": 0.9942682358847749,
+          "self_mac_levels": 0.9999979967935405,
+          "dominant": "z",
+          "width_symmetry": 0.9999999999999999,
+          "character": "bending"
+        },
+        {
+          "mode": 3,
+          "lam_fem": 0.625490422053102,
+          "lam_star": 0.6249971031244628,
+          "fx": 0.0010833562646497283,
+          "fy": 0.03821947232476343,
+          "fz": 0.9606971714105869,
+          "self_mac_levels": 0.9999990820683524,
+          "dominant": "z",
+          "width_symmetry": -0.9999999999999998,
+          "character": "torsion"
+        },
+        {
+          "mode": 4,
+          "lam_fem": 1.1049755420509615,
+          "lam_star": 1.1036346156730177,
+          "fx": 0.018028671305759445,
+          "fy": 0.9819629155413248,
+          "fz": 8.41315291585396e-06,
+          "self_mac_levels": 0.9999996443150272,
+          "dominant": "y",
+          "width_symmetry": null,
+          "character": "lateral"
+        },
+        {
+          "mode": 5,
+          "lam_fem": 1.8565354697366465,
+          "lam_star": 1.8548102878033952,
+          "fx": 0.011439613146380721,
+          "fy": 0.00017700859694494618,
+          "fz": 0.9883833782566743,
+          "self_mac_levels": 0.9999948957974296,
+          "dominant": "z",
+          "width_symmetry": 1.0000000000000002,
+          "character": "bending"
+        },
+        {
+          "mode": 6,
+          "lam_fem": 2.6285125772084874,
+          "lam_star": 2.6264588468012273,
+          "fx": 0.004187996627626471,
+          "fy": 0.03752776954622645,
+          "fz": 0.958284233826147,
+          "self_mac_levels": 0.9999969102191867,
+          "dominant": "z",
+          "width_symmetry": -1.0,
+          "character": "torsion"
+        }
+      ],
+      "dof": 159885,
+      "solver": "sparse"
+    }
+  }
+}

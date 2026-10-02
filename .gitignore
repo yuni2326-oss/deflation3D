@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+# trained network parameters (about 60 MB per run) are not distributed
+docs/_generated/data/paper4/p5_params_*.npz

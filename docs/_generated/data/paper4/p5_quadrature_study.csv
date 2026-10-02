@@ -1,0 +1,7 @@
+grid,n_points,rel_err_a,rel_err_b,meets_tol,chosen,tol,reference_grid,reference_self_consistency,field
+8x6x4,192,0.013188535313699568,0.010363238283085607,False,False,1e-06,96x40x24,5.329070518200751e-15,"smooth manufactured, u = x*(trig), wavenumber 10.9955"
+12x6x4,288,0.0008176425842782997,0.00015763772077159732,False,False,1e-06,96x40x24,5.329070518200751e-15,"smooth manufactured, u = x*(trig), wavenumber 10.9955"
+16x8x6,768,4.566987863441341e-07,8.767532677644851e-08,True,True,1e-06,96x40x24,5.329070518200751e-15,"smooth manufactured, u = x*(trig), wavenumber 10.9955"
+20x10x6,1200,4.5669286463656533e-07,8.768515757928697e-08,True,False,1e-06,96x40x24,5.329070518200751e-15,"smooth manufactured, u = x*(trig), wavenumber 10.9955"
+24x12x8,2304,6.679434783052329e-11,1.2815970507062957e-11,True,False,1e-06,96x40x24,5.329070518200751e-15,"smooth manufactured, u = x*(trig), wavenumber 10.9955"
+32x16x10,5120,2.220446049250313e-16,3.3306690738754696e-15,True,False,1e-06,96x40x24,5.329070518200751e-15,"smooth manufactured, u = x*(trig), wavenumber 10.9955"

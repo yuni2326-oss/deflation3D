@@ -293,3 +293,53 @@ def test_committed_atlas_labels_survive_the_tie_rule():
             f3 = [m["fx"], m["fy"], m["fz"]]
             dom = run_p5.mode_character(_synthetic("bending"), f3)["dominant"]
             assert dom == m["dominant"]
+
+
+L_GEO = {"kind": "L", "L": 1.0, "b": 0.2, "h": 0.1, "a": 0.5, "E": 1.0, "rho": 1.0, "nu": 0.29}
+L_SMALL_LADDER = [(10, 2, 1), (20, 4, 2), (40, 8, 4)]
+
+
+def test_structure_reference_runs_on_the_l_bracket(tmp_path):
+    """E21의 참조도 같은 함수로 만든다 — 다중 블록 메시·블록 합성 구적·블록 점 평가가 모두 지난다."""
+    r = run_p5.structure_reference("lb_test", L_GEO, ladder=L_SMALL_LADDER, n_modes=6,
+                                   cert_grid=(16, 8, 6), outdir=str(tmp_path))
+    lam = [m["lam_star"] for m in r["modes"]]
+    assert all(np.isfinite(lam)) and lam == sorted(lam) and lam[0] > 0
+    # 가장 거친 단(두께 방향 요소 1개)은 비틀림(모드 6)을 아직 못 풀어 첫 쌍이 0.979다. 블록 점
+    # 평가가 맞다면 인증은 세밀화와 함께 1로 다가간다 — 잘못 찾은 점이 있으면 수렴하지 않는다.
+    for c in r["cluster_rows"]:
+        assert c["per_pair"][-1] >= 0.999 and c["per_pair"][-1] >= c["per_pair"][0] - 1e-6
+    assert os.path.exists(os.path.join(str(tmp_path), "p5_reference_lb_test.csv"))
+
+
+def test_structure_reference_records_its_launch_provenance(tmp_path):
+    """참조는 판정의 입력이다. 컨테이너의 git은 저장소 소유자가 달라 status를 거부하고, 그러면
+    build()의 git_dirty가 늘 참으로 찍힌다(E16·E18 참조). 시작 시점의 출처를 함께 싣는다."""
+    run_p5.structure_reference("lp_test", {}, ladder=SMALL_LADDER, n_modes=6,
+                               outdir=str(tmp_path))
+    man = json.load(open(os.path.join(str(tmp_path), "manifest_p5_reference_lp_test.json"),
+                         encoding="utf-8"))
+    assert {"git_sha", "git_dirty", "timestamp_utc"} <= set(man["launch"])
+
+
+def test_l_ladder_keeps_cubic_elements_and_matching_block_faces():
+    """E21 사다리: 블록 절점이 맞으려면 Δx = Δy(n_x = 5 n_y, L/b = 5), 요소는 정육면체(n_z = n_y/2)."""
+    g = L_GEO
+    for nx, ny, nz in run_p5.L_LADDER:
+        assert nx * g["b"] == pytest.approx(ny * g["L"])
+        assert ny * g["h"] == pytest.approx(nz * g["b"])
+    assert [lv[1] for lv in run_p5.L_LADDER] == [4, 8, 16]
+
+
+BI_GEO = {"kind": "bilayer", "L": 1.0, "b": 0.2, "h": 0.1, "E": 1.0, "E_top": 0.1,
+          "rho": 1.0, "nu": 0.29}
+
+
+def test_structure_reference_runs_on_the_bilayer(tmp_path):
+    """E22의 참조도 같은 함수로 만든다 — 요소별 재료·층별 합성 구적이 함께 지난다."""
+    r = run_p5.structure_reference("bi_test", BI_GEO, ladder=SMALL_LADDER, n_modes=6,
+                                   cert_grid=(16, 8, 4), outdir=str(tmp_path))
+    lam = [m["lam_star"] for m in r["modes"]]
+    assert all(np.isfinite(lam)) and lam == sorted(lam) and lam[0] > 0
+    assert all(len(c) == 1 for c in r["clusters"])
+    assert r["worst_shape_cert"] >= 0.99

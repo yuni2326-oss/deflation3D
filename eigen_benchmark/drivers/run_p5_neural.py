@@ -565,6 +565,13 @@ V2_TAU_SEED = 9001               # §3.2 보정 전용 시드 기저(본실험 s
 V2_TAU_N_SEEDS = 8
 
 
+def _geometry_record(geometry):
+    """매니페스트의 기하 기록. 수치는 float로 남기고 종류 표지("kind": "L")는 문자열 그대로 둔다."""
+    if geometry is None:
+        return None
+    return {k: v if isinstance(v, str) else float(v) for k, v in geometry.items()}
+
+
 def tau_calibration(outdir=None, quick: bool = False, device=None,
                     width: int = 128, depth: int = 5, tag: str | None = None,
                     geometry=None, bc: str = "clamped_x0", audit_grid=None,
@@ -619,7 +626,7 @@ def tau_calibration(outdir=None, quick: bool = False, device=None,
         "seed_base": V2_TAU_SEED, "n_seeds": n_seeds, "modes": list(modes),
         "arm": TAU_CAL_ARM, "iters": iters, "audit_grid": list(audit),
         "resample_every": V2_RESAMPLE_EVERY, "tag": tag,
-        "geometry": None if geometry is None else {k: float(v) for k, v in geometry.items()},
+        "geometry": _geometry_record(geometry),
         "bc": bc, "family_axes": None if family_axes is None
         else [list(a) for a in family_axes],
         "disjoint": "calibration seeds are drawn from base 9001 and the main grid "
@@ -757,7 +764,8 @@ def grid_v2(outdir=None, tau: float | None = None, arms=None, width: int = 128,
             ref_name: str = "p5_reference", fixed_train_grid=None,
             pair_scoring: bool = False, mc_points: int | None = None,
             mc_resample_every: int = 1, storage: str = "raw",
-            batch_diag: bool = False, ref_level=None) -> dict:
+            batch_diag: bool = False, ref_level=None,
+            resample_every: int | None = None) -> dict:
     """§5 본실험 — 훈련은 재표집 격자, 게이트·채점은 감사 격자.
 
     `pair_scoring`은 축퇴쌍이 있는 구조를 위한 군집 단위 정합이다(`match_clustered`). 끄면
@@ -808,7 +816,9 @@ def grid_v2(outdir=None, tau: float | None = None, arms=None, width: int = 128,
                 if pair_scoring else [(m,) for m in range(1, n_modes + 1)])
     rows, recs, diag = [], [], []
 
-    plan = [(a, mc_resample_every if mc_points else V2_RESAMPLE_EVERY,
+    # `resample_every`는 가우스 격자족의 재추첨 주기다(E17). 기본값은 본실험의 250회다.
+    gauss_every = V2_RESAMPLE_EVERY if resample_every is None else int(resample_every)
+    plan = [(a, mc_resample_every if mc_points else gauss_every,
              "mc" if mc_points else "resampled") for a in arms]
     if control:
         plan.append(("exact", None, "fixed_audit"))
@@ -952,7 +962,7 @@ def grid_v2(outdir=None, tau: float | None = None, arms=None, width: int = 128,
         "driver": "run_p5_neural.grid_v2", "quick": bool(quick), "tag": tag,
         "launch": launch,
         "input_scaling": "per-axis [0,1]^3" if normalize_input else "raw",
-        "geometry": None if geometry is None else {k: float(v) for k, v in geometry.items()},
+        "geometry": _geometry_record(geometry),
         "bc": bc, "reference": ref_name,
         "reference_level": list(LADDER[-1] if ref_level is None else ref_level),
         "pair_scoring": bool(pair_scoring), "clusters": [list(c) for c in clusters],
@@ -965,8 +975,10 @@ def grid_v2(outdir=None, tau: float | None = None, arms=None, width: int = 128,
         "audit_grid": list(audit), "check_quadrature_grid": list(check),
         "family_axes": None if family_axes is None
         else [list(a) for a in family_axes],
-        "train_grid": "resampled Gauss family, redrawn every "
-                      f"{V2_RESAMPLE_EVERY} iterations",
+        "train_grid": (f"uniform Monte Carlo, {mc_points} points, redrawn every "
+                       f"{mc_resample_every} iterations" if mc_points else
+                       f"resampled Gauss family, redrawn every {gauss_every} iterations"),
+        "resample_every": None if mc_points else gauss_every,
         "control_condition": "arm (b) trained on the audit grid itself, so the "
                              "resampling effect is a measured contrast rather "
                              "than an assumption",
@@ -1203,6 +1215,183 @@ def e16_run(arm: str, outdir=None, device=None) -> dict:
         raise FileNotFoundError(f"{p}가 없다 — e16_tau를 먼저 돌린다(사전규정 §2.4)")
     tau = float(json.load(open(p, encoding="utf-8"))["tau"])
     return grid_v2(outdir=d, device=device, tau=tau, **e16_settings(arm))
+
+
+# ── 후속 E17–E20 (사전규정 2026-10-02-p5-e17-e20-prespecification.md) ─────────
+# 일곱 실행의 grid_v2 인자와 τ 출처. 기준 구조(E17·E20)는 기준 τ(5.0)를, 정사각 계열(E18·E19)은
+# E16 τ(0.5)를 쓴다 — E18은 E16과 같은 게이트로 비교해야 하기 때문이다(사전규정 §2).
+E18_GEOMETRY = {"L": 1.0, "b": 0.105, "h": 0.10, "E": 1.0, "rho": 1.0, "nu": 0.29}
+E18_REF = "p5_reference_e18_near"
+E17_MC_POINTS = 1134                     # 본실험 격자족 평균 점수(E15와 같다)
+E20_MC_POINTS = 4 * E17_MC_POINTS        # 표본 비직교 O(1/√B)를 절반으로
+FOLLOWUP_RUNS = ("e17_gauss1", "e17_mc250", "e18_diag", "e18_exact", "e19_budget", "e19_norm",
+                 "e20r_b4")
+_BASE_TAU = "manifest_p5_tau.json"
+
+
+def followup_settings(name: str):
+    """(grid_v2 인자, τ 매니페스트 파일명). 계기는 E15와 같다(사다리·Gram·시드별 스팬·파라미터)."""
+    base = {"control": False, "tag": name, "check_grids": list(E6_LADDER),
+            "gram_offdiag": True, "per_seed_span": True, "save_params": True}
+    sq_tau = f"manifest_p5_tau_{E16_TAU_TAG}.json"
+    if name == "e17_gauss1":
+        return {**base, "arms": ("exact",), "resample_every": 1}, _BASE_TAU
+    if name == "e17_mc250":
+        return {**base, "arms": ("exact",), "mc_points": E17_MC_POINTS,
+                "mc_resample_every": 250}, _BASE_TAU
+    if name in ("e18_diag", "e18_exact"):
+        k = e16_settings("diagonal" if name == "e18_diag" else "exact")
+        k.update(tag=name, geometry=dict(E18_GEOMETRY), ref_name=E18_REF)
+        return k, sq_tau
+    if name in ("e19_budget", "e19_norm"):
+        k = e16_settings("exact")
+        k["tag"] = name
+        if name == "e19_budget":
+            k["iters"] = 2 * GRID_ITERS
+        else:
+            k["normalize_input"] = True
+        return k, sq_tau
+    if name == "e20r_b4":
+        return {**base, "arms": ("diagonal",), "mc_points": E20_MC_POINTS,
+                "mc_resample_every": 1, "storage": "orthogonalized",
+                "batch_diag": True}, _BASE_TAU
+    raise ValueError(f"후속 실행은 {FOLLOWUP_RUNS} 중 하나여야 합니다: {name!r}")
+
+
+def followup_run(name: str, outdir=None, device=None) -> dict:
+    """후속 실행 하나. τ 매니페스트가 없으면 거부한다."""
+    import json
+    kwargs, tau_file = followup_settings(name)
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    p = os.path.join(d, tau_file)
+    if not os.path.exists(p):
+        raise FileNotFoundError(f"{p}가 없다 — 이 실행의 τ를 먼저 정한다(사전규정 §2)")
+    tau = float(json.load(open(p, encoding="utf-8"))["tau"])
+    return grid_v2(outdir=d, device=device, tau=tau, **kwargs)
+
+
+
+# ── E21 L-브래킷 (사전규정 2026-10-04-p5-e21-prespecification.md) ──────────────
+# 상자가 아닌 첫 구조. 팔1 [0, 1] × [0, 0.2], 팔2 [0.8, 1] × [0.2, 0.7], 두께 0.1, x = 0 고정이며
+# 재진입 모서리 (0.8, 0.2, z)에 응력 특이가 있다. 구적 격자 (n_L, n_W, n_T)는 팔의 길이 방향 단위
+# 길이당 Gauss 점 수(올림), 폭, 두께의 점 수다. 최소 인증 훈련 격자 (12, 6, 6)부터 45개를 두어
+# 평균 점수 1,269가 기준 구조(1,134)에 가깝다 — 기준 격자족을 그대로 쓰면 2,084점이다. 감사 격자는
+# 격자족 최대 (16, 8, 8)의 1.5배 올림이며 인증을 통과했다. 사다리는 감사 격자의 4/3, 2, 8/3배다.
+E21_GEOMETRY = {"kind": "L", "L": 1.0, "b": 0.20, "h": 0.10, "a": 0.50,
+                "E": 1.0, "rho": 1.0, "nu": 0.29}
+E21_REF = "p5_reference_e21_lbracket"
+E21_REF_LEVEL = (80, 16, 8)              # run_p5.L_LADDER[-1]
+E21_FAMILY_AXES = ((12, 13, 14, 15, 16), (6, 7, 8), (6, 7, 8))
+E21_AUDIT_GRID = (24, 12, 12)
+E21_CHECK_GRID = (32, 16, 16)
+E21_LADDER = ((32, 16, 16), (48, 24, 24), (64, 32, 32))
+E21_TAU_TAG = "e21_lbracket"
+
+
+def e21_settings(arm: str) -> dict:
+    """E21 arm 하나의 `grid_v2` 인자. τ는 넣지 않는다 — `e21_run`이 보정 파일에서 읽는다."""
+    from .p5_stats import E21_TAGS
+    if arm not in E21_TAGS:
+        raise ValueError(f"E21 arm은 {sorted(E21_TAGS)} 중 하나여야 합니다: {arm!r}")
+    return {"arms": (arm,), "control": False, "tag": E21_TAGS[arm],
+            "geometry": dict(E21_GEOMETRY), "bc": "clamped_x0",
+            "ref_name": E21_REF, "ref_level": E21_REF_LEVEL,
+            "audit_grid": E21_AUDIT_GRID, "check_grid": E21_CHECK_GRID,
+            "check_grids": list(E21_LADDER), "family_axes": E21_FAMILY_AXES,
+            "pair_scoring": True, "gram_offdiag": True, "per_seed_span": True,
+            "save_params": True}
+
+
+def e21_tau(outdir=None, device=None) -> dict:
+    """E21 τ 재보정(사전규정 §2.4) — 본실험 arm보다 먼저 한 번."""
+    return tau_calibration(outdir=outdir, device=device, tag=E21_TAU_TAG,
+                           geometry=dict(E21_GEOMETRY), audit_grid=E21_AUDIT_GRID,
+                           family_axes=E21_FAMILY_AXES, heartbeat_every=HEARTBEAT_ITERS)
+
+
+def e21_run(arm: str, outdir=None, device=None) -> dict:
+    """E21 arm 하나. τ는 `manifest_p5_tau_e21_lbracket.json`에서 읽고, 없으면 거부한다 —
+    다른 구조의 τ로 조용히 게이트되는 일을 막는다."""
+    import json
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    p = os.path.join(d, f"manifest_p5_tau_{E21_TAU_TAG}.json")
+    if not os.path.exists(p):
+        raise FileNotFoundError(f"{p}가 없다 — e21_tau를 먼저 돌린다(사전규정 §2.4)")
+    tau = float(json.load(open(p, encoding="utf-8"))["tau"])
+    return grid_v2(outdir=d, device=device, tau=tau, **e21_settings(arm))
+
+
+
+
+# ── E21b (사전규정 2026-10-06-p5-e21b-prespecification.md) ─────────────────────
+# E21 정확 arm에서 훈련 격자족의 재추첨 주기만 1로 바꾼다(E17 가우스·1과 같은 조작). E21의 실패 셀은
+# 훈련 격자에서 Rayleigh 하한 아래로 내려갔다 — 매 반복 다시 뽑으면 그 착취가 풀리는지를 본다.
+# τ는 E21의 것(보조 분류에만 쓴다 — 판정량은 게이트 없는 정확도다).
+E21B_TAG = "e21lb_exact_g1"
+
+
+def e21b_settings() -> dict:
+    return {**e21_settings("exact"), "tag": E21B_TAG, "resample_every": 1}
+
+
+def e21b_run(outdir=None, device=None) -> dict:
+    """E21b. τ는 `manifest_p5_tau_e21_lbracket.json`에서 읽고, 없으면 거부한다."""
+    import json
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    p = os.path.join(d, f"manifest_p5_tau_{E21_TAU_TAG}.json")
+    if not os.path.exists(p):
+        raise FileNotFoundError(f"{p}가 없다 — E21 τ 보정이 먼저다")
+    tau = float(json.load(open(p, encoding="utf-8"))["tau"])
+    return grid_v2(outdir=d, device=device, tau=tau, **e21b_settings())
+
+
+# ── E22 두 층 이종재료 (사전규정 2026-10-04-p5-e22-prespecification.md) ────────────
+# E13-a 상자(h = 0.10)를 두께 방향 두 층으로 나눈다. z < h/2는 E = 1(E13-a와 같은 재료), 위는 E = 0.1.
+# 밀도·포아송비는 같아 질량 내적(사영·MAC)이 균질과 같고 강성 불연속만 달라진다. 구적 격자
+# (n_x, n_y, n_T)의 n_T는 층마다의 Gauss 점 수다. 격자족은 평면 축이 E13-a와 같고(16–20, 8–10) 층마다
+# 3·4점이라 두께 평균 7점·평균 1,134점이 E13-a와 같다(30개). 감사 격자는 격자족 최대 (20, 10, 4)의
+# 1.5배 올림이며 인증을 통과했다. 계면을 가로지르는 Gauss는 같은 점 수로 인증을 지나지 못한다.
+E22_GEOMETRY = {"kind": "bilayer", "L": 1.0, "b": 0.20, "h": 0.10, "E": 1.0, "E_top": 0.1,
+                "rho": 1.0, "nu": 0.29}
+E22_REF = "p5_reference_e22_bilayer"
+E22_REF_LEVEL = (48, 16, 8)              # run_p5.LADDER[-1]
+E22_FAMILY_AXES = ((16, 17, 18, 19, 20), (8, 9, 10), (3, 4))
+E22_AUDIT_GRID = (30, 15, 6)
+E22_CHECK_GRID = (40, 20, 8)
+E22_LADDER = ((40, 20, 8), (60, 30, 12), (80, 40, 16))
+E22_TAU_TAG = "e22_bilayer"
+
+
+def e22_settings(arm: str) -> dict:
+    """E22 arm 하나의 `grid_v2` 인자. τ는 `e22_run`이 보정 파일에서 읽는다."""
+    from .p5_stats import E22_TAGS
+    if arm not in E22_TAGS:
+        raise ValueError(f"E22 arm은 {sorted(E22_TAGS)} 중 하나여야 합니다: {arm!r}")
+    return {"arms": (arm,), "control": False, "tag": E22_TAGS[arm],
+            "geometry": dict(E22_GEOMETRY), "bc": "clamped_x0",
+            "ref_name": E22_REF, "ref_level": E22_REF_LEVEL,
+            "audit_grid": E22_AUDIT_GRID, "check_grid": E22_CHECK_GRID,
+            "check_grids": list(E22_LADDER), "family_axes": E22_FAMILY_AXES,
+            "pair_scoring": True, "gram_offdiag": True, "per_seed_span": True,
+            "save_params": True}
+
+
+def e22_tau(outdir=None, device=None) -> dict:
+    """E22 τ 재보정 — 본실험 arm보다 먼저 한 번."""
+    return tau_calibration(outdir=outdir, device=device, tag=E22_TAU_TAG,
+                           geometry=dict(E22_GEOMETRY), audit_grid=E22_AUDIT_GRID,
+                           family_axes=E22_FAMILY_AXES, heartbeat_every=HEARTBEAT_ITERS)
+
+
+def e22_run(arm: str, outdir=None, device=None) -> dict:
+    """E22 arm 하나. τ는 `manifest_p5_tau_e22_bilayer.json`에서 읽고, 없으면 거부한다."""
+    import json
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    p = os.path.join(d, f"manifest_p5_tau_{E22_TAU_TAG}.json")
+    if not os.path.exists(p):
+        raise FileNotFoundError(f"{p}가 없다 — e22_tau를 먼저 돌린다")
+    tau = float(json.load(open(p, encoding="utf-8"))["tau"])
+    return grid_v2(outdir=d, device=device, tau=tau, **e22_settings(arm))
 
 
 # ── E1 오라클 적합 상한 (사전규정 2026-09-10) ───────────────────────────────

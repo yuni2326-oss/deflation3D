@@ -535,6 +535,319 @@ def e16(data_dir: str = DATA_DIR) -> dict | None:
     return e16_from_records(recs, spans, e14_observations(data_dir))
 
 
+# ---------------------------------------------------------------- E17–E20
+
+# 사전규정 2026-10-02-p5-e17-e20-prespecification.md.
+def unpaired_bootstrap(a, b, B: int = B_DEFAULT, seed: int = SEED):
+    """독립 두 집단 a − b의 (점, 2.5 %, 97.5 %). 집단마다 시드를 따로 재표집한다 — 구조가 다르면
+    같은 시드 번호라도 짝이 아니다(E18)."""
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    rng = np.random.default_rng(seed)
+    ia = rng.integers(0, len(a), size=(B, len(a)))
+    ib = rng.integers(0, len(b), size=(B, len(b)))
+    return _ci(a.mean() - b.mean(), a[ia].mean(1) - b[ib].mean(1))
+
+
+def _rule(ci) -> str:
+    return "rule1" if ci[1] > 0 else "rule3" if ci[2] < 0 else "rule2"
+
+
+def _same_sign_excluding_zero(*cis) -> bool:
+    return all(_excludes_zero(c) for c in cis) and len({c[0] > 0 for c in cis}) == 1
+
+
+def _n_acc(recs, modes=WALL_MODES) -> int:
+    return int(sum(accurate(r) for r in recs if r["mode"] in modes))
+
+
+# E17 — 정확 arm의 훈련 구적 2 × 2. (배치, 재추첨 주기) → (태그, arm 부분일치, 조건).
+E17_CELLS = {("gauss", 250): ("v2", "exact", "resampled"), ("mc", 1): ("e15b", None, None),
+             ("gauss", 1): ("e17_gauss1", None, None), ("mc", 250): ("e17_mc250", None, None)}
+
+
+def e17_from_cells(cells: dict, B: int = B_DEFAULT, seed: int = SEED) -> dict:
+    """판정량은 모드 4–6의 게이트 없는 정확도(E15와 같다). 네 칸 모두 같은 시드 0–19라 짝짓는다.
+    규칙 1: 배치 대비(MC − 가우스)가 두 주기에서 같은 부호로 0 제외. 규칙 2: 주기 대비(매 반복 −
+    250회)가 두 배치에서 같은 부호로 0 제외. 규칙 3: 상호작용이 0 제외. 셋 다 아니면 분해 불가."""
+    acc = {k: _seed_share(v, accurate) for k, v in cells.items()}
+    g250, g1, m250, m1 = acc[("gauss", 250)], acc[("gauss", 1)], acc[("mc", 250)], acc[("mc", 1)]
+    c = {"placement_at_every1": paired_bootstrap(m1, g1, B, seed),
+         "placement_at_every250": paired_bootstrap(m250, g250, B, seed),
+         "frequency_at_gauss": paired_bootstrap(g1, g250, B, seed),
+         "frequency_at_mc": paired_bootstrap(m1, m250, B, seed),
+         "interaction": interaction_bootstrap(m1, m250, g1, g250, B, seed)}
+    r1 = _same_sign_excluding_zero(c["placement_at_every1"], c["placement_at_every250"])
+    r2 = _same_sign_excluding_zero(c["frequency_at_gauss"], c["frequency_at_mc"])
+    r3 = _excludes_zero(c["interaction"])
+    return {"acc_4_6": {f"{p}_{f}": _n_acc(v) for (p, f), v in cells.items()}, "contrasts": c,
+            "verdict": {"rule1": r1, "rule2": r2, "rule3": r3,
+                        "indecomposable": not (r1 or r2 or r3)}}
+
+
+def e17(data_dir: str = DATA_DIR) -> dict | None:
+    try:
+        cells = {k: load(data_dir, t, arm=None if a is None else arm_key(a), condition=cond)
+                 for k, (t, a, cond) in E17_CELLS.items()}
+    except FileNotFoundError:
+        return None
+    return e17_from_cells(cells)
+
+
+# E18 — 근접 축퇴(b/h = 1.05) 대 정확 축퇴(E16). 같은 τ = 0.5, 같은 판정량(correct).
+def e18_from_records(recs18: dict, spans18_diag, recs16_diag, obs14, B: int = B_DEFAULT,
+                     seed: int = SEED) -> dict:
+    """주 판정: acc₃(대각, E18) − acc₃(대각, E16), 짝짓지 않는 부트스트랩. 규칙 1(양수): 축퇴가
+    아니면 벽이 풀린다 — E16의 추가 해는 정확한 축퇴의 것. 규칙 2: 0 포함. 규칙 3: 음수.
+    보조: E18에서 E14 관계의 이전(S1과 같은 계산)."""
+    correct = lambda r: float(r["outcome"] == "correct")
+    at3 = lambda rs: _by_seed(rs, correct, lambda r: r["mode"] == E16_MODE)
+    a18, a16 = at3(recs18["diagonal"]), at3(recs16_diag)
+    ci = unpaired_bootstrap(a18, a16, B, seed)
+    c12 = _c12(spans18_diag)
+    n3 = int(a18.sum())
+    fails = {}
+    for r in recs18["diagonal"]:
+        if r["mode"] == E16_MODE and r["outcome"] != "correct":
+            fails[r["outcome"]] = fails.get(r["outcome"], 0) + 1
+    out = {"primary": {"contrast": ci, "verdict": _rule(ci)},
+           "correct_mode3": {"e18_diagonal": n3, "e16_diagonal": int(a16.sum())},
+           "e14_transfer": e14_transfer(np.log10(c12), n3, obs14, B, seed),
+           "c12_median": float(np.median(c12)), "mode3_failure_forms_diagonal": fails}
+    if "exact" in recs18:
+        out["d3_within_e18"] = paired_bootstrap(at3(recs18["exact"]), a18, B, seed)
+    return out
+
+
+def e18(data_dir: str = DATA_DIR) -> dict | None:
+    try:
+        recs = {"diagonal": load(data_dir, "e18_diag"), "exact": load(data_dir, "e18_exact")}
+        with open(os.path.join(data_dir, "p5_span_per_seed_e18_diag.csv"), encoding="utf-8") as f:
+            spans = list(csv.DictReader(f))
+        r16 = load(data_dir, E16_TAGS["diagonal"])
+    except FileNotFoundError:
+        return None
+    return e18_from_records(recs, spans, r16, e14_observations(data_dir))
+
+
+# E19 — 정사각 단면 정확 arm의 비틀림·축방향 순서 역전. 예산 2배 / 입력 정규화.
+E19_MODES = (5, 6)
+
+
+def e19_from_records(cond_recs: dict, recs16_exact, B: int = B_DEFAULT, seed: int = SEED) -> dict:
+    """조건마다 acc(모드 5–6, 게이트 없음) − E16 정확 arm, 시드 짝지음. 게이트가 예산에 불변이
+    아니므로(원고 5절) 수렴 게이트를 쓰지 않는다. 서술: 5단계 정합 군집."""
+    base = _seed_share(recs16_exact, accurate, modes=E19_MODES)
+    out = {"e16_exact_acc_5_6": _n_acc(recs16_exact, E19_MODES)}
+    for name, rs in cond_recs.items():
+        acc = _seed_share(rs, accurate, modes=E19_MODES)
+        ci = paired_bootstrap(acc, base, B, seed)
+        cl = {}
+        for r in rs:
+            if r["mode"] == 5:
+                k = "-".join(map(str, r.get("cluster") or [r["matched_mode"]]))
+                cl[k] = cl.get(k, 0) + 1
+        out[name] = {"contrast": ci, "verdict": _rule(ci), "acc_5_6": _n_acc(rs, E19_MODES),
+                     "stage5_clusters": cl}
+    return out
+
+
+def e19(data_dir: str = DATA_DIR) -> dict | None:
+    try:
+        conds = {t: load(data_dir, t) for t in ("e19_budget", "e19_norm")}
+        r16 = load(data_dir, E16_TAGS["exact"])
+    except FileNotFoundError:
+        return None
+    return e19_from_records(conds, r16)
+
+
+# E20 — Rowan 규약 × MC에서 표본 크기 4배.
+def e20_from_records(recs20, recs15r, B: int = B_DEFAULT, seed: int = SEED) -> dict:
+    """D = acc(모드 4–6, 게이트 없음, B = 4,536) − acc(E15-r, B = 1,134), 시드 짝지음."""
+    a, b = _seed_share(recs20, accurate), _seed_share(recs15r, accurate)
+    ci = paired_bootstrap(a, b, B, seed)
+    off = {}
+    for m in (3, 4, 5, 6):
+        v = [r["batch_offdiag"] for r in recs20 if r["mode"] == m
+             and r.get("batch_offdiag") is not None and np.isfinite(r["batch_offdiag"])]
+        off[m] = float(np.median(v)) if v else None
+    return {"contrast": ci, "verdict": _rule(ci),
+            "acc_4_6": {"e20r_b4": _n_acc(recs20), "e15r": _n_acc(recs15r)},
+            "batch_offdiag_median_by_mode": off}
+
+
+def e20(data_dir: str = DATA_DIR) -> dict | None:
+    try:
+        r20, r15 = load(data_dir, "e20r_b4"), load(data_dir, E15_TAGS["rowan_mc"])
+    except FileNotFoundError:
+        return None
+    return e20_from_records(r20, r15)
+
+
+
+# E21 — L-브래킷(사전규정 2026-10-04-p5-e21-prespecification.md). 상자가 아닌 기하에서의 재현.
+E21_TAGS = {"diagonal": "e21lb_diag", "exact": "e21lb_exact", "qr": "e21lb_qr"}
+E21_MODES = (4, 5, 6)          # 성분 공유 필요조건이 지목한 벽(k* = 3의 다음 모드)부터
+E21_GUARD_MODE2_MIN = 10       # 2단계는 저장이 하나라 규칙에 불변 — 미달이면 계기 고장(E16과 같다)
+E21_FLOOR_MIN = 10             # 정확 arm 모드 4–6 correct 합(60 중)이 이보다 적으면 검출력 부족 공시
+E21_STAGES = (2, 3)            # E14 법칙이 적합된 단계
+
+
+def _span_c(span_rows, k: int) -> np.ndarray:
+    """단계 k 저장 스팬의 최대 |C|, 시드 순. 단계 k의 목표 모드는 k + 1이어야 한다."""
+    for r in span_rows:
+        if int(r["k"]) == k and int(r["stage_mode"]) != k + 1:
+            raise ValueError(f"k = {k} 행의 stage_mode가 {k + 1}이 아니다: {r['stage_mode']}")
+    return _by_seed(span_rows, lambda r: float(r["max_offdiag"]), lambda r: int(r["k"]) == k)
+
+
+def elam_shape_right(recs, mac_min: float = 0.9, elam_max: float = 0.05) -> dict:
+    """모드별, 형상은 맞은 셀(정합 = 목표, MAC ≥ mac_min, 하한 게이트 통과)의 e_λ — 개수, 중앙값,
+    e_λ > elam_max인 셀 수(형상은 맞고 Λ만 문턱 밖). 모서리 특이(E21)·재료 계면(E22)의 값을 본다."""
+    out = {}
+    for m in sorted({r["mode"] for r in recs}):
+        e = [r["e_lam"] for r in recs if r["mode"] == m and r["outcome"] != "invalid_quadrature"
+             and r["matched_mode"] == m and r["mac"] >= mac_min and np.isfinite(r["e_lam"])]
+        out[m] = {"n": len(e), "median": float(np.median(e)) if e else None,
+                  "over_threshold": int(sum(v > elam_max for v in e))}
+    return out
+
+
+def _replication(recs: dict, spans: dict, obs14: dict, modes, B: int, seed: int) -> dict:
+    """새 구조 하나에서의 재현 판정(E21·E22 공통). recs·spans는 arm → 기록·시드별 스팬 행.
+
+    주 판정 D = acc(정확, modes) − acc(대각, modes), correct, 시드 짝지음(E13과 같은 판정량).
+    보조 S1은 E14 법칙의 관측 단위(시드 × k ∈ {2, 3})를 그대로 모아 대각 arm의 모드 3·4 correct
+    합을 예측 범위와 비교한다."""
+    def by_mode(rs, pred):
+        return {m: int(sum(pred(r) for r in rs if r["mode"] == m))
+                for m in sorted({r["mode"] for r in rs})}
+    counts = {a: by_mode(rs, lambda r: r["outcome"] == "correct") for a, rs in recs.items()}
+    acc = {a: by_mode(rs, accurate) for a, rs in recs.items()}
+    ok = counts["exact"].get(2, 0) >= E21_GUARD_MODE2_MIN
+    f = {a: seed_fraction(rs, modes) for a, rs in recs.items()}
+    ci = paired_bootstrap(f["exact"], f["diagonal"], B, seed)
+    n_exact = sum(counts["exact"].get(m, 0) for m in modes)
+    fails = {}
+    for a, rs in recs.items():
+        g = {}
+        for r in rs:
+            if r["mode"] in modes and r["outcome"] != "correct":
+                g[r["outcome"]] = g.get(r["outcome"], 0) + 1
+        fails[a] = g
+    xs = {k: np.log10(_span_c(spans["diagonal"], k)) for k in E21_STAGES}
+    x = np.concatenate([xs[k] for k in E21_STAGES])
+    obs = {k: counts["diagonal"].get(k + 1, 0) for k in E21_STAGES}
+    k2 = _subset(obs14, obs14["k"] == 2)
+    return {"correct_by_mode": counts, "accurate_by_mode": acc, "instrument_ok": bool(ok),
+            "primary": {"contrast": ci, "verdict": "not_read" if not ok else _rule(ci),
+                        "modes": list(modes), "floor": n_exact < E21_FLOOR_MIN},
+            "other_contrasts": {
+                "qr_minus_diagonal": paired_bootstrap(f["qr"], f["diagonal"], B, seed),
+                "exact_minus_qr": paired_bootstrap(f["exact"], f["qr"], B, seed)},
+            "failure_forms_4_6": fails,
+            "e14_transfer": e14_transfer(x, sum(obs.values()), obs14, B, seed),
+            "e14_transfer_k2_only": e14_transfer(x, sum(obs.values()), k2, B, seed),
+            "e14_transfer_by_stage": {k: e14_transfer(xs[k], obs[k], obs14, B, seed)
+                                      for k in E21_STAGES},
+            "c_median_by_arm": {a: {k: float(np.median(_span_c(sp, k))) for k in E21_STAGES}
+                                for a, sp in spans.items()},
+            "elam_shape_right": {a: elam_shape_right(rs) for a, rs in recs.items()}}
+
+
+def e21_from_records(recs: dict, spans: dict, obs14: dict, B: int = B_DEFAULT,
+                     seed: int = SEED) -> dict:
+    """사전규정 2026-10-04 E21 §3을 그대로 적용한다(판정 모드 4–6)."""
+    return _replication(recs, spans, obs14, E21_MODES, B, seed)
+
+
+def e21(data_dir: str = DATA_DIR) -> dict | None:
+    try:
+        recs = {a: load(data_dir, t) for a, t in E21_TAGS.items()}
+        spans = {}
+        for a, t in E21_TAGS.items():
+            with open(os.path.join(data_dir, f"p5_span_per_seed_{t}.csv"), encoding="utf-8") as f:
+                spans[a] = list(csv.DictReader(f))
+    except FileNotFoundError:
+        return None
+    return e21_from_records(recs, spans, e14_observations(data_dir))
+
+
+
+def training_exploitation(recs) -> dict:
+    """모드별 훈련 구적 착취의 지문. 훈련 격자에서 잰 Λ가 참조 고유값 아래인 셀 수(정확히 적분했다면
+    Rayleigh 하한 때문에 나올 수 없다)와, 실패 셀의 감사/훈련 Λ 비 중앙값. E21에서 사후로 본 것을
+    E21b에서 사전 등록한다."""
+    out = {}
+    for m in sorted({r["mode"] for r in recs}):
+        sel = [r for r in recs if r["mode"] == m]
+        fail = [r["Lam"] / r["Lam_train"] for r in sel if not accurate(r) and r["Lam_train"] > 0]
+        out[m] = {"train_below_ref": int(sum(r["Lam_train"] < r["Lam_ref"] for r in sel)),
+                  "median_audit_over_train_failing": float(np.median(fail)) if fail else None}
+    return out
+
+
+# E21b — E21 정확 arm의 재추첨 주기 1(사전규정 2026-10-06-p5-e21b-prespecification.md).
+E21B_TAG = "e21lb_exact_g1"
+
+
+def e21b_from_records(recs_g1, recs_exact, B: int = B_DEFAULT, seed: int = SEED) -> dict:
+    """D = acc₄₋₆(매 반복) − acc₄₋₆(E21 정확), 게이트 없는 정확도, 시드 짝지음(E17·E19와 같은 판정량).
+    규칙 1(0 제외, 양수) → 매 반복 재추첨이 L에서 정확 사영의 복구를 되살린다."""
+    a = _seed_share(recs_g1, accurate, E21_MODES)
+    b = _seed_share(recs_exact, accurate, E21_MODES)
+    ci = paired_bootstrap(a, b, B, seed)
+    named = {E21B_TAG: recs_g1, E21_TAGS["exact"]: recs_exact}
+    return {"contrast": ci, "verdict": _rule(ci),
+            "acc_4_6": {k: _n_acc(rs, E21_MODES) for k, rs in named.items()},
+            "accurate_by_mode": {k: {m: int(sum(accurate(r) for r in rs if r["mode"] == m))
+                                     for m in sorted({r["mode"] for r in rs})}
+                                 for k, rs in named.items()},
+            "exploitation": {k: training_exploitation(rs) for k, rs in named.items()},
+            "ladder_unresolved": {k: {m: ladder_counts([r for r in rs if r["mode"] == m])["unresolved"]
+                                      for m in sorted({r["mode"] for r in rs})}
+                                  for k, rs in named.items()}}
+
+
+def e21b(data_dir: str = DATA_DIR) -> dict | None:
+    try:
+        g1, ex = load(data_dir, E21B_TAG), load(data_dir, E21_TAGS["exact"])
+    except FileNotFoundError:
+        return None
+    return e21b_from_records(g1, ex)
+
+
+# E22 — 두 층 이종재료(사전규정 2026-10-04-p5-e22-prespecification.md). E21과 같은 규칙에 같은 기하의
+# 균질 구조(E13-a)와의 비교를 서술로 더한다. 두 구조의 τ가 달라 비교는 게이트 없는 정확도로 한다.
+E22_TAGS = {"diagonal": "e22bi_diag", "exact": "e22bi_exact", "qr": "e22bi_qr"}
+E22_MODES = (4, 5, 6)          # 성분 공유 필요조건이 지목한 벽(k* = 3의 다음 모드)부터
+E22_COMPARE_TAG = "e13a_thick"
+
+
+def e22_from_records(recs: dict, spans: dict, obs14: dict, recs13a: dict | None = None,
+                     B: int = B_DEFAULT, seed: int = SEED) -> dict:
+    out = _replication(recs, spans, obs14, E22_MODES, B, seed)
+    if recs13a is not None:
+        out["vs_e13a_gate_free"] = {
+            a: unpaired_bootstrap(_seed_share(recs[a], accurate, E22_MODES),
+                                  _seed_share(recs13a[a], accurate, E22_MODES), B, seed)
+            for a in recs if a in recs13a}
+        out["e13a_elam_shape_right"] = {a: elam_shape_right(rs) for a, rs in recs13a.items()}
+    return out
+
+
+def e22(data_dir: str = DATA_DIR) -> dict | None:
+    try:
+        recs = {a: load(data_dir, t) for a, t in E22_TAGS.items()}
+        spans = {}
+        for a, t in E22_TAGS.items():
+            with open(os.path.join(data_dir, f"p5_span_per_seed_{t}.csv"), encoding="utf-8") as f:
+                spans[a] = list(csv.DictReader(f))
+        r13 = {a: load(data_dir, E22_COMPARE_TAG, arm=arm_key(a)) for a in E22_TAGS}
+    except FileNotFoundError:
+        return None
+    return e22_from_records(recs, spans, e14_observations(data_dir), r13)
+
+
 def _excludes_zero(t) -> bool:
     return t[1] * t[2] > 0
 
@@ -561,6 +874,8 @@ def main(data_dir: str = DATA_DIR, outdir: str | None = None) -> dict:
            "e13": e13(data_dir),
            "e15": e15(data_dir),
            "e16": e16(data_dir),
+           "e17": e17(data_dir), "e18": e18(data_dir), "e19": e19(data_dir), "e20": e20(data_dir),
+           "e21": e21(data_dir), "e21b": e21b(data_dir), "e22": e22(data_dir),
            "e14_registered": e14_registered(obs),
            "e14_fixed_effects": e14_fixed_effects(obs),
            "e14_sensitivity_post_hoc": e14_sensitivity(obs)}

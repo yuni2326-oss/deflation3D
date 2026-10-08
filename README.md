@@ -16,7 +16,9 @@ module that computes every interval and test from those records.
 ```
 eigen_benchmark/
   problems/p5_block.py      27-node hex FEM of the block: assembly, sparse/dense eigensolve,
-                            Richardson ladder, tensor Gauss quadrature, audit-grid certification
+                            Richardson ladder, tensor Gauss quadrature, audit-grid certification;
+                            multi-block L-bracket and two-layer variants (composite quadrature,
+                            element-wise and pointwise Young's modulus)
   neural/p5_neural.py       the sequential neural eigensolver (vector MLP, hard clamp, four
                             deflation rules, Gauss-family or Monte Carlo quadrature, storage rules)
   neural/deflation.py,      exact projection and W-orthonormalization used by the span
@@ -84,7 +86,18 @@ These rules and the constants below were fixed in code before the data they judg
 | ladder resolved | tail spread ≤ 1e-3 | `LADDER_RESOLVED` |
 
 The square-section structure (b = h = 0.10) has its own reference, audit grid (30, 14, 14),
-training family and τ (0.5); see `run_p5_neural.e16_settings`.
+training family and τ (0.5); see `run_p5_neural.e16_settings`. Three further structures carry their
+own settings in the same module:
+
+| Structure | Geometry | Reference ladder | Audit grid | τ | Settings |
+|---|---|---|---|---|---|
+| near-degenerate section | b = 0.105, h = 0.10 | as the square section | (30, 14, 14) | 0.5 | `followup_settings("e18_*")` |
+| L-bracket | arm 1 [0, 1] × [0, 0.2], arm 2 [0.8, 1] × [0.2, 0.7], h = 0.1 | `run_p5.L_LADDER` | (24, 12, 12) | 10 | `e21_settings`, `e21b_settings` |
+| two-layer block | E = 1 below and 0.1 above z = h/2, h = 0.10 | `run_p5.LADDER` | (30, 15, 6), points per layer | 20 | `e22_settings` |
+
+For the L-bracket a quadrature grid (n_L, n_W, n_T) counts points per unit length along each arm, across
+the width and through the thickness; for the two-layer block the third entry counts points per layer.
+Monte Carlo training quadrature and input normalization are refused off the homogeneous box.
 
 ## Committed artifacts
 
@@ -98,11 +111,17 @@ training family and τ (0.5); see `run_p5_neural.e16_settings`.
 - `p5_reference*.{csv,json}`: FEM references; `p5_stats.json`: every reported interval and test
 
 Run tags: `v2` (main grid), `e2_*`–`e14*` (follow-up experiments), `e15r`/`e15b` (storage
-convention under Monte Carlo quadrature), `e16sq_*` (square section). Trained network parameters
-(about 60 MB per run) are not included.
+convention under Monte Carlo quadrature), `e16sq_*` (square section), `e17_*` (training quadrature:
+placement × redraw period), `e18_*` (near-degenerate section), `e19_*` (torsion–axial inversion:
+budget and input normalization), `e20r_b4` (fourfold Monte Carlo sample), `e21lb_*` (L-bracket),
+`e21lb_exact_g1` (L-bracket, family redrawn at every iteration), `e22bi_*` (two-layer block).
+Trained network parameters (about 60 MB per run) are not included.
 
 Manifests written before the launch-provenance field existed record the repository head at write
-time rather than at launch.
+time rather than at launch. Inside the containers used here `git status` is refused (the repository
+is owned by another user), so the `git_dirty` written at the top level of a manifest is not reliable;
+read the `launch` field, which carries the commit and the dirty flag passed in by the runner. FEM
+reference manifests carry `launch` from the L-bracket onward.
 
 ## License
 

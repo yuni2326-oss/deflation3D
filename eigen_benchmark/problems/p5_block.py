@@ -62,10 +62,97 @@ def _axis_nodes(n: int, length: float) -> np.ndarray:
     return out
 
 
+def _is_l(g) -> bool:
+    return g is not None and g.get("kind") == "L"
+
+
+def _is_bilayer(g) -> bool:
+    return g is not None and g.get("kind") == "bilayer"
+
+
+def young_at(pts, g):
+    """점마다의 영률. 두 층 구조(E22)는 z < h/2에서 E, 그 위에서 E_top이다. 그 밖의 구조는
+    커밋된 산술이 그대로이도록 float 하나를 돌려준다."""
+    if not _is_bilayer(g):
+        return float(g["E"])
+    z = np.asarray(pts, float)[:, 2]
+    return np.where(z < 0.5 * float(g["h"]), float(g["E"]), float(g["E_top"]))
+
+
+def l_blocks(nx: int, ny: int, nz: int, g) -> list:
+    """L-브래킷을 상자 셋으로: 팔1 [0, L−b]×[0, b], 모서리 [L−b, L]×[0, b], 팔2 [L−b, L]×[b, b+a],
+    두께 [0, h]. 반환 [(lo, hi, (nx, ny, nz))]. 길이가 0인 블록은 뺀다.
+
+    (nx, ny, nz)는 팔1 길이 방향·폭·두께의 요소 수다. **평면 안에서 Δx = Δy를 강제한다** — 모서리
+    블록이 정사각 요소가 되고, 두 팔이 같은 평면 해상도를 갖는다. 그래서 nx = ny·L/b여야 한다."""
+    L, b, h, a = (float(g[k]) for k in ("L", "b", "h", "a"))
+    d = b / ny
+    if abs(nx * d - L) > 1e-12 * L:
+        raise ValueError(f"L-브래킷은 Δx = Δy여야 합니다: nx = ny·L/b = {L / d:g}")
+    counts = {"arm1": (L - b) / d, "arm2": a / d}
+    for k, v in counts.items():
+        if abs(v - round(v)) > 1e-9:
+            raise ValueError(f"{k} 길이가 요소 크기의 정수배가 아니다: {v:g}")
+    n1, n2 = int(round(counts["arm1"])), int(round(counts["arm2"]))
+    out = []
+    if n1 > 0:
+        out.append(((0.0, 0.0, 0.0), (L - b, b, h), (n1, ny, nz)))
+    out.append(((L - b, 0.0, 0.0), (L, b, h), (ny, ny, nz)))
+    if n2 > 0:
+        out.append(((L - b, b, 0.0), (L, b + a, h), (ny, n2, nz)))
+    return out
+
+
+def build_mesh_blocks(blocks) -> dict:
+    """상자 블록들의 hex27 메시를 합치고 경계면 절점을 좌표로 병합한다.
+
+    블록마다 `build_mesh`와 같은 절점·요소 순서를 쓰고, 공유면의 절점 좌표는 두 블록에서 같은
+    산술로 나오므로 정확히 일치한다(병합은 12자리 반올림으로 안전하게)."""
+    nodes, elems, meta, n0, e0 = [], [], [], 0, 0
+    for lo, hi, (nx, ny, nz) in blocks:
+        ax = [lo[i] + _axis_nodes(n, hi[i] - lo[i]) for i, n in enumerate((nx, ny, nz))]
+        Nx, Ny, Nz = len(ax[0]), len(ax[1]), len(ax[2])
+        X, Y, Z = np.meshgrid(*ax, indexing="ij")
+        nodes.append(np.column_stack([X.ravel(order="F"), Y.ravel(order="F"),
+                                      Z.ravel(order="F")]))
+        idx = np.arange(Nx * Ny * Nz).reshape((Nx, Ny, Nz), order="F") + n0
+        el = np.empty((nx * ny * nz, 27), dtype=int)
+        e = 0
+        for ez in range(nz):
+            for ey in range(ny):
+                for ex in range(nx):
+                    for k in range(3):
+                        for j in range(3):
+                            for i in range(3):
+                                el[e, 9 * k + 3 * j + i] = idx[2 * ex + i, 2 * ey + j, 2 * ez + k]
+                    e += 1
+        elems.append(el)
+        meta.append({"lo": np.array(lo, float), "hi": np.array(hi, float),
+                     "shape": (nx, ny, nz), "elem_offset": e0})
+        n0 += Nx * Ny * Nz
+        e0 += nx * ny * nz
+    allnodes = np.vstack(nodes)
+    _, first, inverse = np.unique(np.round(allnodes, 12), axis=0, return_index=True,
+                                  return_inverse=True)
+    inverse = np.asarray(inverse).ravel()
+    order = np.argsort(first)                       # 처음 나온 순서를 유지한다
+    rank = np.empty_like(order)
+    rank[order] = np.arange(len(order))
+    remap = rank[inverse]
+    merged = allnodes[first[order]]
+    return {"nodes": merged, "elems": remap[np.vstack(elems)], "shape": None, "blocks": meta}
+
+
 def build_mesh(nx: int, ny: int, nz: int, geometry=None) -> dict:
-    """구조 hex27 메시. 반환 {nodes(n_node,3), elems(n_elem,27), shape}."""
+    """구조 hex27 메시. 반환 {nodes(n_node,3), elems(n_elem,27), shape}.
+
+    `geometry["kind"] == "L"`이면 L-브래킷의 다중 블록 메시다(`l_blocks`)."""
     if min(nx, ny, nz) < 1:
         raise ValueError("요소 수는 축마다 1 이상이어야 합니다")
+    if _is_l(geometry):
+        return build_mesh_blocks(l_blocks(nx, ny, nz, geometry))
+    if _is_bilayer(geometry) and nz % 2:
+        raise ValueError(f"두 층 구조는 계면 z = h/2가 요소면이어야 한다(n_z 짝수): n_z = {nz}")
     g = P5_GEOMETRY if geometry is None else geometry
     ax = _axis_nodes(nx, g["L"])
     ay = _axis_nodes(ny, g["b"])
@@ -113,6 +200,10 @@ def assemble(mesh: dict, geometry=None, n_q: int = 3):
     g = P5_GEOMETRY if geometry is None else geometry
     D = isotropic_D(g["E"], g["nu"])
     rho = g["rho"]
+    # E22 두 층: 요소 중심이 계면 위면 윗층 재료(계면은 요소면이다 — build_mesh가 보장).
+    bilayer = _is_bilayer(g)
+    if bilayer:
+        D_top, z_mid = isotropic_D(g["E_top"], g["nu"]), 0.5 * float(g["h"])
     xyz, elems = mesh["nodes"], mesh["elems"]
     n_dof = 3 * xyz.shape[0]
     gp, gw = gauss_legendre(n_q, -1.0, 1.0)
@@ -128,6 +219,7 @@ def assemble(mesh: dict, geometry=None, n_q: int = 3):
     rows, cols, kv, mv = [], [], [], []
     for el in elems:
         ce = xyz[el]                                     # (27,3)
+        De = D_top if bilayer and ce[:, 2].mean() > z_mid else D
         Ke = np.zeros((81, 81))
         Me = np.zeros((81, 81))
         for N, dN, w0 in quad:
@@ -147,7 +239,7 @@ def assemble(mesh: dict, geometry=None, n_q: int = 3):
             B[5, 0::3] = dNx[:, 1]
             B[5, 1::3] = dNx[:, 0]
             wq = w0 * detJ
-            Ke += wq * (B.T @ D @ B)
+            Ke += wq * (B.T @ De @ B)
             NtN = np.outer(N, N) * (wq * rho)
             for c in range(3):
                 Me[c::3, c::3] += NtN
@@ -258,6 +350,14 @@ def eval_mode_at(mesh: dict, vec_full: np.ndarray, pts: np.ndarray) -> np.ndarra
     """모드 벡터를 임의 점에서 평가. 반환 (n_pts, 3).
 
     구조격자이므로 점이 든 요소를 좌표로 바로 찾는다 — 탐색이 필요 없다."""
+    if mesh.get("blocks") is not None:
+        e, loc = _locate(mesh, pts)
+        out = np.empty((len(e), 3))
+        for q in range(len(e)):
+            N, _ = hex27_shape(*loc[q])
+            dofs = (3 * mesh["elems"][e[q]][:, None] + np.arange(3))
+            out[q] = (N[:, None] * vec_full[dofs]).sum(axis=0)
+        return out
     g_nodes = mesh["nodes"]
     nx, ny, nz = mesh["shape"]
     hi = g_nodes.max(axis=0)
@@ -280,7 +380,27 @@ def eval_mode_at(mesh: dict, vec_full: np.ndarray, pts: np.ndarray) -> np.ndarra
 
 
 def _locate(mesh: dict, pts: np.ndarray):
-    """구조격자이므로 점이 든 요소와 국소좌표를 좌표로 바로 계산한다 — 탐색 없음."""
+    """구조격자이므로 점이 든 요소와 국소좌표를 좌표로 바로 계산한다 — 탐색 없음.
+    다중 블록 메시는 점이 든 블록을 먼저 고른다(공유면 위의 점은 어느 쪽이든 같은 값이다)."""
+    if mesh.get("blocks") is not None:
+        pts = np.atleast_2d(np.asarray(pts, float))
+        e = np.full(len(pts), -1, dtype=int)
+        loc = np.zeros((len(pts), 3))
+        for blk in mesh["blocks"]:
+            lo, hi, ne = blk["lo"], blk["hi"], np.array(blk["shape"])
+            span = hi - lo
+            tol = 1e-12 * span.max()
+            inside = (e < 0) & np.all((pts >= lo - tol) & (pts <= hi + tol), axis=1)
+            if not inside.any():
+                continue
+            t = np.clip((pts[inside] - lo) / span, 0.0, 1.0)
+            cell = np.minimum((t * ne).astype(int), ne - 1)
+            c_lo = lo + cell / ne * span
+            loc[inside] = np.clip(2.0 * (pts[inside] - c_lo) / (span / ne) - 1.0, -1.0, 1.0)
+            e[inside] = blk["elem_offset"] + cell[:, 0] + ne[0] * (cell[:, 1] + ne[1] * cell[:, 2])
+        if (e < 0).any():
+            raise ValueError(f"영역 밖의 점 {int((e < 0).sum())}개")
+        return e, loc
     hi = mesh["nodes"].max(axis=0)
     nx, ny, nz = mesh["shape"]
     ne = np.array([nx, ny, nz])
@@ -451,9 +571,16 @@ def manufactured_field(pts, geometry=None, k: float = _CERT_WAVENUMBER,
     return u, G
 
 
-def _forms_from_field(u, G, W, geometry=None):
+def _forms_from_field(u, G, W, geometry=None, pts=None):
+    """(a, b). 두 층 구조는 점마다의 영률로 a를 잰다 — `pts`가 필요하다."""
     g = P5_GEOMETRY if geometry is None else geometry
     D = isotropic_D(g["E"], g["nu"])
+    if _is_bilayer(g):
+        if pts is None:
+            raise ValueError("두 층 구조의 에너지에는 점마다의 영률이 필요하다 — pts를 넘긴다")
+        W_a, D = W * young_at(pts, g), isotropic_D(1.0, g["nu"])
+    else:
+        W_a = W
     eps = np.empty((len(u), 6))
     eps[:, 0] = G[:, 0, 0]
     eps[:, 1] = G[:, 1, 1]
@@ -461,13 +588,52 @@ def _forms_from_field(u, G, W, geometry=None):
     eps[:, 3] = G[:, 1, 2] + G[:, 2, 1]
     eps[:, 4] = G[:, 0, 2] + G[:, 2, 0]
     eps[:, 5] = G[:, 0, 1] + G[:, 1, 0]
-    a = float(np.einsum("q,qi,ij,qj->", W, eps, D, eps))
+    a = float(np.einsum("q,qi,ij,qj->", W_a, eps, D, eps))
     b = float(g["rho"] * np.einsum("q,qi,qi->", W, u, u))
     return a, b
 
 
+def l_grid_blocks(grid, g) -> list:
+    """L-브래킷의 구적 블록. grid = (nL, nW, nT): 팔의 길이 방향은 단위 길이당 nL점(올림), 폭은 nW점,
+    두께는 nT점. 모서리는 nW × nW. 반환 [(lo, hi, (n_x, n_y, n_z))]."""
+    nL, nW, nT = (int(v) for v in grid)
+    L, b, h, a = (float(g[k]) for k in ("L", "b", "h", "a"))
+    up = lambda x: max(1, int(np.ceil(x - 1e-9)))
+    out = []
+    if L - b > 0:
+        out.append(((0.0, 0.0, 0.0), (L - b, b, h), (up(nL * (L - b)), nW, nT)))
+    out.append(((L - b, 0.0, 0.0), (L, b, h), (nW, nW, nT)))
+    if a > 0:
+        out.append(((L - b, b, 0.0), (L, b + a, h), (nW, up(nL * a), nT)))
+    return out
+
+
 def _tensor_grid(grid, geometry=None):
     g = P5_GEOMETRY if geometry is None else geometry
+    if _is_l(g):
+        P, Wt = [], []
+        for lo, hi_, n in l_grid_blocks(grid, g):
+            axes, wts = [], []
+            for k in range(3):
+                p, w = gauss_legendre(int(n[k]), float(lo[k]), float(hi_[k]))
+                axes.append(p); wts.append(w)
+            X, Y, Z = np.meshgrid(*axes, indexing="ij")
+            P.append(np.column_stack([X.ravel(), Y.ravel(), Z.ravel()]))
+            Wt.append(np.einsum("i,j,k->ijk", *wts).ravel())
+        return np.vstack(P), np.concatenate(Wt)
+    if _is_bilayer(g):
+        # 두께 방향은 층마다 grid[2]점의 Gauss — 계면의 불연속을 점이 가로지르지 않는다.
+        h2 = 0.5 * float(g["h"])
+        axes, wts = [], []
+        for n, length in zip(grid[:2], (g["L"], g["b"])):
+            p, w = gauss_legendre(int(n), 0.0, float(length))
+            axes.append(p); wts.append(w)
+        z0, w0 = gauss_legendre(int(grid[2]), 0.0, h2)
+        z1, w1 = gauss_legendre(int(grid[2]), h2, float(g["h"]))
+        axes.append(np.concatenate([z0, z1])); wts.append(np.concatenate([w0, w1]))
+        X, Y, Z = np.meshgrid(*axes, indexing="ij")
+        W = np.einsum("i,j,k->ijk", *wts).ravel()
+        return np.column_stack([X.ravel(), Y.ravel(), Z.ravel()]), W
     hi = (g["L"], g["b"], g["h"])
     axes, wts = [], []
     for n, length in zip(grid, hi):
@@ -493,9 +659,9 @@ def _field_errors(grid, ref_grid, geometry, fields):
     out = []
     for k, my, mz in fields:
         a_r, b_r = _forms_from_field(*manufactured_field(p_r, geometry, k, my, mz),
-                                     w_r, geometry)
+                                     w_r, geometry, pts=p_r)
         a_c, b_c = _forms_from_field(*manufactured_field(p_c, geometry, k, my, mz),
-                                     w_c, geometry)
+                                     w_c, geometry, pts=p_c)
         out.append({"k": float(k), "my": int(my), "mz": int(mz),
                     "err_a": abs(a_c / a_r - 1), "err_b": abs(b_c / b_r - 1)})
     return out
@@ -524,7 +690,8 @@ def certify_audit_grid(train_family_max, tol: float = 1e-6, geometry=None,
     for grid in cand:
         fe = _field_errors(grid, reference, geometry, fields)
         worst = max(max(f["err_a"], f["err_b"]) for f in fe)
-        rows.append({"grid": grid, "n_points": int(np.prod(grid)), "worst": worst})
+        rows.append({"grid": grid, "n_points": int(len(_tensor_grid(grid, geometry)[1])),
+                     "worst": worst})
         if worst > tol or chosen is not None:
             continue
         up = tuple(int(math.ceil(v * 1.25)) for v in grid)
@@ -565,15 +732,16 @@ def quadrature_convergence(grids, tol: float = 1e-6, geometry=None,
     기준값은 후보보다 훨씬 촘촘한 격자에서 얻고, 그 기준 자체가 수렴했는지를 두 번째
     촘촘한 격자와 비교해 확인한다(자기 수렴 확인 없이 기준을 쓰면 인증이 순환이다)."""
     pts, W = _tensor_grid(reference, geometry)
-    a_ref, b_ref = _forms_from_field(*manufactured_field(pts, geometry), W, geometry)
+    a_ref, b_ref = _forms_from_field(*manufactured_field(pts, geometry), W, geometry, pts=pts)
     pts2, W2 = _tensor_grid(check, geometry)
-    a_chk, b_chk = _forms_from_field(*manufactured_field(pts2, geometry), W2, geometry)
+    a_chk, b_chk = _forms_from_field(*manufactured_field(pts2, geometry), W2, geometry,
+                                     pts=pts2)
     ref_self = max(abs(a_chk / a_ref - 1), abs(b_chk / b_ref - 1))
 
     rows = []
     for grid in grids:
         p_, w_ = _tensor_grid(grid, geometry)
-        a, b = _forms_from_field(*manufactured_field(p_, geometry), w_, geometry)
+        a, b = _forms_from_field(*manufactured_field(p_, geometry), w_, geometry, pts=p_)
         rows.append({"grid": tuple(int(v) for v in grid),
                      "n_points": int(len(w_)),
                      "err_a": abs(a / a_ref - 1), "err_b": abs(b / b_ref - 1)})

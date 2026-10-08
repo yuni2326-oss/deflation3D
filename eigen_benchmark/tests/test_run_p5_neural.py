@@ -860,3 +860,308 @@ def test_p5_drivers_read_and_write_paper4_by_default(monkeypatch, tmp_path):
     for path in (p5_stats.DATA_DIR, figures_p5.DATA_DIR):
         assert path.replace("\\", "/").endswith("data/paper4")
     assert figures_p5.FIG_DIR.replace("\\", "/").endswith("fig/paper4")
+
+
+@pytest.mark.skipif(__import__("importlib").util.find_spec("torch") is None,
+                    reason="torch 없음")
+def test_grid_v2_can_redraw_the_gauss_family_at_any_period(tmp_path, monkeypatch):
+    """E17은 가우스 격자족을 매 반복 다시 뽑는다(본실험은 250회마다). 기본값은 그대로다."""
+    import json
+    import shutil
+    from eigen_benchmark.neural import p5_neural as p5n
+    seen = []
+    real = p5n.solve_p5_neural
+
+    def spy(*a, **kw):
+        seen.append(kw.get("resample_every"))
+        return real(*a, **kw)
+    monkeypatch.setattr(p5n, "solve_p5_neural", spy)
+    d = str(tmp_path)
+    shutil.copy("docs/_generated/data/paper4/p5_reference.csv", d)
+    run.grid_v2(outdir=d, quick=True, arms=("exact",), control=False, device="cpu",
+                tau=5.0, tag="r1", resample_every=1)
+    run.grid_v2(outdir=d, quick=True, arms=("exact",), control=False, device="cpu",
+                tau=5.0, tag="r250")
+    assert seen == [1, run.V2_RESAMPLE_EVERY]
+    m1 = json.load(open(f"{d}/manifest_p5_neural_r1.json", encoding="utf-8"))
+    assert m1["resample_every"] == 1 and "every 1 iterations" in m1["train_grid"]
+
+
+def test_followup_settings_carry_the_prespecified_design():
+    """사전규정 2026-10-02 E17–E20의 일곱 실행. 설정을 손으로 조립하지 않는다."""
+    names = ("e17_gauss1", "e17_mc250", "e18_diag", "e18_exact", "e19_budget", "e19_norm",
+             "e20r_b4")
+    assert tuple(run.FOLLOWUP_RUNS) == names
+    got = {n: run.followup_settings(n) for n in names}
+    for n, (k, tau_file) in got.items():
+        assert k["tag"] == n and k["control"] is False and k["save_params"]
+    base_tau, sq_tau = "manifest_p5_tau.json", f"manifest_p5_tau_{run.E16_TAU_TAG}.json"
+    g1, m250 = got["e17_gauss1"][0], got["e17_mc250"][0]
+    assert g1["arms"] == ("exact",) and g1["resample_every"] == 1 and "mc_points" not in g1
+    assert m250["arms"] == ("exact",) and m250["mc_points"] == 1134 and m250["mc_resample_every"] == 250
+    for n in ("e18_diag", "e18_exact"):
+        k = got[n][0]
+        assert k["geometry"]["b"] == 0.105 and k["geometry"]["h"] == 0.10
+        assert k["ref_name"] == "p5_reference_e18_near" and got[n][1] == sq_tau
+        assert k["audit_grid"] == run.E16_AUDIT_GRID and k["pair_scoring"]
+    assert got["e18_diag"][0]["arms"] == ("diagonal",) and got["e18_exact"][0]["arms"] == ("exact",)
+    assert got["e19_budget"][0]["iters"] == 40000 and got["e19_norm"][0]["normalize_input"]
+    for n in ("e19_budget", "e19_norm"):
+        assert got[n][0]["arms"] == ("exact",) and got[n][0]["geometry"] == run.E16_GEOMETRY
+        assert got[n][1] == sq_tau
+    e20 = got["e20r_b4"][0]
+    assert e20["mc_points"] == 4 * 1134 and e20["storage"] == "orthogonalized"
+    assert e20["arms"] == ("diagonal",) and e20["batch_diag"]
+    for n in ("e17_gauss1", "e17_mc250", "e20r_b4"):
+        assert got[n][1] == base_tau
+    with pytest.raises(ValueError):
+        run.followup_settings("e99")
+
+
+def test_followup_run_refuses_without_its_tau(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        run.followup_run("e18_diag", outdir=str(tmp_path))
+
+
+@pytest.mark.skipif(__import__("importlib").util.find_spec("torch") is None,
+                    reason="torch 없음")
+def test_tau_calibration_records_the_l_bracket_geometry(tmp_path):
+    """E21의 τ 보정 매니페스트는 기하의 종류 표지("kind": "L")를 문자열 그대로 남긴다."""
+    import json
+    g = {"kind": "L", "L": 1.0, "b": 0.2, "h": 0.1, "a": 0.5, "E": 1.0, "rho": 1.0, "nu": 0.29}
+    run.tau_calibration(outdir=str(tmp_path), quick=True, device="cpu", tag="lt",
+                        geometry=g, audit_grid=(16, 8, 6),
+                        family_axes=((8, 9), (4, 5), (3, 4)))
+    man = json.load(open(tmp_path / "manifest_p5_tau_lt.json", encoding="utf-8"))
+    assert man["geometry"]["kind"] == "L" and man["geometry"]["a"] == 0.5
+
+
+@pytest.mark.skipif(__import__("importlib").util.find_spec("torch") is None,
+                    reason="torch 없음")
+def test_grid_v2_runs_on_the_l_bracket(tmp_path):
+    """신경 본실험 경로가 L-브래킷에서 끝까지 돈다(기계 검사)."""
+    import json
+    from eigen_benchmark.drivers import run_p5
+    g = {"kind": "L", "L": 1.0, "b": 0.2, "h": 0.1, "a": 0.5, "E": 1.0, "rho": 1.0, "nu": 0.29}
+    d = str(tmp_path)
+    run_p5.structure_reference("lq", g, ladder=[(10, 2, 1), (20, 4, 2), (40, 8, 4)],
+                               n_modes=6, cert_grid=(16, 8, 6), outdir=d)
+    run.grid_v2(outdir=d, quick=True, arms=("exact",), control=False, device="cpu", tau=5.0,
+                geometry=g, ref_name="p5_reference_lq", ref_level=(40, 8, 4),
+                audit_grid=(16, 8, 6), check_grid=(20, 10, 8), tag="lq")
+    man = json.load(open(f"{d}/manifest_p5_neural_lq.json", encoding="utf-8"))
+    assert man["geometry"]["a"] == 0.5 and man["reference_level"] == [40, 8, 4]
+
+
+def test_e21_settings_carry_the_prespecified_design():
+    """사전규정 2026-10-04 E21의 값이 실행 인자에 그대로 실려야 한다."""
+    from eigen_benchmark.drivers import p5_stats
+    tags = set()
+    for arm in ("diagonal", "exact", "qr"):
+        k = run.e21_settings(arm)
+        tags.add(k["tag"])
+        assert k["arms"] == (arm,) and k["control"] is False
+        assert k["tag"] == p5_stats.E21_TAGS[arm]
+        assert k["geometry"] == run.E21_GEOMETRY and k["geometry"]["kind"] == "L"
+        assert k["bc"] == "clamped_x0" and not k.get("normalize_input", False)
+        assert "mc_points" not in k and "resample_every" not in k      # 가우스 격자족, 250회
+        assert k["pair_scoring"] and k["gram_offdiag"] and k["per_seed_span"] and k["save_params"]
+        assert k["ref_name"] == "p5_reference_e21_lbracket" and k["ref_level"] == (80, 16, 8)
+        assert k["family_axes"] == ((12, 13, 14, 15, 16), (6, 7, 8), (6, 7, 8))
+        assert k["audit_grid"] == (24, 12, 12)
+        # 사다리는 감사 격자의 4/3, 2, 8/3배(E6과 같은 배율)
+        assert k["check_grid"] == k["check_grids"][0]
+        assert [tuple(g) for g in k["check_grids"]] == [
+            tuple(round(f * v) for v in k["audit_grid"]) for f in (4 / 3, 2, 8 / 3)]
+    assert len(tags) == 3
+    with pytest.raises(ValueError):
+        run.e21_settings("reorth_diagonal")
+
+
+def test_e21_family_clears_the_minimum_certified_l_grid_on_every_axis():
+    """격자족의 가장 성긴 격자가 L의 최소 인증 격자이고, 어느 축이든 한 칸 줄이면 불합격이다."""
+    from eigen_benchmark.problems import p5_block as p5
+    lo = tuple(min(a) for a in run.E21_FAMILY_AXES)
+    below = [tuple(v - (i == j) for j, v in enumerate(lo)) for i in range(3)]
+    q = p5.quadrature_convergence([lo, *below], tol=1e-6, geometry=run.E21_GEOMETRY)
+    err = [max(r["err_a"], r["err_b"]) for r in q["rows"]]
+    assert lo == (12, 6, 6) and err[0] <= 1e-6 and all(e > 1e-6 for e in err[1:])
+
+
+def test_e21_audit_grid_is_the_certified_one_and_clears_the_margin():
+    import math
+    from eigen_benchmark.problems import p5_block as p5
+    fam_max = tuple(max(a) for a in run.E21_FAMILY_AXES)
+    r = p5.certify_audit_grid(fam_max, geometry=run.E21_GEOMETRY)
+    assert r["meets_tol"] and r["chosen"] == run.E21_AUDIT_GRID
+    assert run.E21_AUDIT_GRID == tuple(math.ceil(1.5 * v) for v in fam_max)
+
+
+def test_e21_reference_artifact_matches_the_settings():
+    """참조는 설정과 같은 구조·사다리·감사 격자에서 인증되고, 벽 모드는 그 지배 성분에서 나온다."""
+    import json
+    import os
+    from eigen_benchmark.drivers import p5_stats, run_p5
+    from eigen_benchmark.render import figures_p5
+    p = "docs/_generated/data/paper4/p5_reference_e21_lbracket.json"
+    if not os.path.exists(p):
+        pytest.skip("E21 참조가 없다 — run_p5.structure_reference를 먼저 돌린다")
+    ref = json.load(open(p, encoding="utf-8"))
+    assert ref["geometry"] == run.E21_GEOMETRY
+    assert [tuple(lv) for lv in ref["ladder"]] == [tuple(lv) for lv in run_p5.L_LADDER]
+    assert tuple(ref["ladder"][-1]) == run.E21_REF_LEVEL
+    assert tuple(ref["cert_grid"]) == run.E21_AUDIT_GRID
+    assert ref["clusters"][:6] == [[1], [2], [3], [4], [5], [6]]
+    assert ref["shape_certified"] and ref["clusters_consistent_across_levels"]
+    wall = figures_p5.predicted_wall([m["dominant"] for m in ref["modes"][:6]])
+    assert p5_stats.E21_MODES == tuple(range(wall, 7))
+
+
+def test_e21_tau_calibrates_on_the_l_family_and_reports_progress(monkeypatch):
+    got = {}
+    monkeypatch.setattr(run, "tau_calibration", lambda **kw: got.update(kw) or {"tau": 1.0})
+    run.e21_tau(outdir="x", device="cpu")
+    assert got["tag"] == run.E21_TAU_TAG == "e21_lbracket"
+    assert got["audit_grid"] == run.E21_AUDIT_GRID and got["family_axes"] == run.E21_FAMILY_AXES
+    assert got["geometry"] == run.E21_GEOMETRY and got["heartbeat_every"] == run.HEARTBEAT_ITERS
+
+
+def test_e21_run_refuses_without_its_tau(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        run.e21_run("diagonal", outdir=str(tmp_path))
+
+
+def test_e21_run_reads_its_own_tau(tmp_path, monkeypatch):
+    import json
+    (tmp_path / "manifest_p5_tau_e21_lbracket.json").write_text(json.dumps({"tau": 0.2}))
+    (tmp_path / "manifest_p5_tau.json").write_text(json.dumps({"tau": 5.0}))
+    got = {}
+    monkeypatch.setattr(run, "grid_v2", lambda **kw: got.update(kw) or {"verdicts": None})
+    run.e21_run("exact", outdir=str(tmp_path), device="cpu")
+    assert got["tau"] == 0.2 and got["tag"] == "e21lb_exact" and got["arms"] == ("exact",)
+
+
+def test_e22_settings_carry_the_prespecified_design():
+    """사전규정 2026-10-04 E22의 값이 실행 인자에 그대로 실려야 한다."""
+    from eigen_benchmark.drivers import p5_stats
+    tags = set()
+    for arm in ("diagonal", "exact", "qr"):
+        k = run.e22_settings(arm)
+        tags.add(k["tag"])
+        assert k["arms"] == (arm,) and k["control"] is False
+        assert k["tag"] == p5_stats.E22_TAGS[arm]
+        assert k["geometry"] == run.E22_GEOMETRY and k["geometry"]["kind"] == "bilayer"
+        assert k["geometry"]["E"] / k["geometry"]["E_top"] == pytest.approx(10.0)
+        assert k["bc"] == "clamped_x0" and not k.get("normalize_input", False)
+        assert "mc_points" not in k and "resample_every" not in k
+        assert k["pair_scoring"] and k["gram_offdiag"] and k["per_seed_span"] and k["save_params"]
+        assert k["ref_name"] == "p5_reference_e22_bilayer" and k["ref_level"] == (48, 16, 8)
+        assert k["family_axes"] == ((16, 17, 18, 19, 20), (8, 9, 10), (3, 4))
+        assert k["audit_grid"] == (30, 15, 6)
+        assert k["check_grid"] == k["check_grids"][0]
+        assert [tuple(g) for g in k["check_grids"]] == [
+            tuple(round(f * v) for v in k["audit_grid"]) for f in (4 / 3, 2, 8 / 3)]
+    assert len(tags) == 3
+    with pytest.raises(ValueError):
+        run.e22_settings("reorth_diagonal")
+
+
+def test_e22_family_matches_e13a_in_plane_and_on_average():
+    """평면 축은 E13-a 격자족과 같고, 층마다 3·4점이라 두께 평균 7점·평균 점수가 E13-a와 같다."""
+    import itertools
+    import numpy as np
+    from eigen_benchmark.neural import p5_neural as p5n
+    from eigen_benchmark.problems import p5_block as p5
+    ax = run.E22_FAMILY_AXES
+    assert ax[0] == p5n.FAMILY_NX and ax[1] == p5n.FAMILY_NY
+    assert 2 * np.mean(ax[2]) == np.mean(p5n.FAMILY_NZ)
+    n = [len(p5._tensor_grid(g, run.E22_GEOMETRY)[1]) for g in itertools.product(*ax)]
+    box = {k: v for k, v in run.E22_GEOMETRY.items() if k not in ("kind", "E_top")}
+    n13 = [len(p5._tensor_grid(g, box)[1])
+           for g in itertools.product(p5n.FAMILY_NX, p5n.FAMILY_NY, p5n.FAMILY_NZ)]
+    assert np.mean(n) == np.mean(n13) == 1134
+
+
+def test_e22_family_is_certified_and_the_unsplit_grid_is_not():
+    """층마다 나눈 격자족은 모두 인증을 지나고, 계면을 가로지르는 Gauss는 두께 방향 48점으로도
+    1e-6에 닿지 못한다(불연속 피적분이라 대수적으로만 수렴한다 — 실측 약 n⁻²)."""
+    import itertools
+    from eigen_benchmark.problems import p5_block as p5
+    g = run.E22_GEOMETRY
+    q = p5.quadrature_convergence(list(itertools.product(*run.E22_FAMILY_AXES)), tol=1e-6,
+                                  geometry=g)
+    assert all(max(r["err_a"], r["err_b"]) <= 1e-6 for r in q["rows"])
+    pr, wr = p5._tensor_grid((96, 40, 24), g)
+    ar, _ = p5._forms_from_field(*p5.manufactured_field(pr, g), wr, g, pts=pr)
+    box = {k: v for k, v in g.items() if k not in ("kind", "E_top")}
+    pu, wu = p5._tensor_grid((20, 10, 48), box)
+    au, _ = p5._forms_from_field(*p5.manufactured_field(pu, g), wu, g, pts=pu)
+    assert abs(au / ar - 1) > 1e-6
+
+
+def test_e22_audit_grid_is_the_certified_one_and_clears_the_margin():
+    import math
+    from eigen_benchmark.problems import p5_block as p5
+    fam_max = tuple(max(a) for a in run.E22_FAMILY_AXES)
+    r = p5.certify_audit_grid(fam_max, geometry=run.E22_GEOMETRY)
+    assert r["meets_tol"] and r["chosen"] == run.E22_AUDIT_GRID
+    assert run.E22_AUDIT_GRID == tuple(math.ceil(1.5 * v) for v in fam_max)
+
+
+def test_e22_reference_artifact_matches_the_settings():
+    import json
+    import os
+    from eigen_benchmark.drivers import p5_stats, run_p5
+    from eigen_benchmark.render import figures_p5
+    p = "docs/_generated/data/paper4/p5_reference_e22_bilayer.json"
+    if not os.path.exists(p):
+        pytest.skip("E22 참조가 없다 — run_p5.structure_reference를 먼저 돌린다")
+    ref = json.load(open(p, encoding="utf-8"))
+    assert ref["geometry"] == run.E22_GEOMETRY
+    assert [tuple(lv) for lv in ref["ladder"]] == [tuple(lv) for lv in run_p5.LADDER]
+    assert tuple(ref["ladder"][-1]) == run.E22_REF_LEVEL
+    assert tuple(ref["cert_grid"]) == run.E22_AUDIT_GRID
+    assert ref["clusters"][:6] == [[1], [2], [3], [4], [5], [6]]
+    assert ref["shape_certified"] and ref["clusters_consistent_across_levels"]
+    wall = figures_p5.predicted_wall([m["dominant"] for m in ref["modes"][:6]])
+    assert p5_stats.E22_MODES == tuple(range(wall, 7))
+
+
+def test_e22_tau_calibrates_on_the_bilayer_family(monkeypatch):
+    got = {}
+    monkeypatch.setattr(run, "tau_calibration", lambda **kw: got.update(kw) or {"tau": 1.0})
+    run.e22_tau(outdir="x", device="cpu")
+    assert got["tag"] == run.E22_TAU_TAG == "e22_bilayer"
+    assert got["audit_grid"] == run.E22_AUDIT_GRID and got["family_axes"] == run.E22_FAMILY_AXES
+    assert got["geometry"] == run.E22_GEOMETRY and got["heartbeat_every"] == run.HEARTBEAT_ITERS
+
+
+def test_e22_run_reads_its_own_tau_and_refuses_without_it(tmp_path, monkeypatch):
+    import json
+    with pytest.raises(FileNotFoundError):
+        run.e22_run("diagonal", outdir=str(tmp_path))
+    (tmp_path / "manifest_p5_tau_e22_bilayer.json").write_text(json.dumps({"tau": 0.5}))
+    got = {}
+    monkeypatch.setattr(run, "grid_v2", lambda **kw: got.update(kw) or {"verdicts": None})
+    run.e22_run("qr", outdir=str(tmp_path), device="cpu")
+    assert got["tau"] == 0.5 and got["tag"] == "e22bi_qr" and got["arms"] == ("qr",)
+
+
+def test_e21b_is_the_e21_exact_arm_with_the_family_redrawn_every_iteration():
+    """사전규정 2026-10-06 E21b — E21 정확 arm과 재추첨 주기 하나만 다르다(E17의 가우스·1과 같은 조작)."""
+    k = run.e21b_settings()
+    base = run.e21_settings("exact")
+    assert k["resample_every"] == 1 and k["tag"] == "e21lb_exact_g1"
+    drop = lambda d: {kk: v for kk, v in d.items() if kk not in ("tag", "resample_every")}
+    assert drop(k) == drop(base) and "resample_every" not in base
+
+
+def test_e21b_run_reads_the_e21_tau_and_refuses_without_it(tmp_path, monkeypatch):
+    import json
+    with pytest.raises(FileNotFoundError):
+        run.e21b_run(outdir=str(tmp_path))
+    (tmp_path / "manifest_p5_tau_e21_lbracket.json").write_text(json.dumps({"tau": 10.0}))
+    got = {}
+    monkeypatch.setattr(run, "grid_v2", lambda **kw: got.update(kw) or {"verdicts": None})
+    run.e21b_run(outdir=str(tmp_path), device="cpu")
+    assert got["tau"] == 10.0 and got["resample_every"] == 1 and got["tag"] == "e21lb_exact_g1"

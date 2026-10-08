@@ -677,3 +677,71 @@ def test_mc_training_is_reproducible_and_records_batch_offdiagonals():
     assert off.shape == (2, 3)
     assert np.isnan(off[:, :2]).all()             # 저장 모드가 둘 이상일 때만 정의된다
     assert np.isfinite(off[:, 2]).all() and (off[:, 2] > 0).all()
+
+
+def test_neural_quadrature_on_the_l_bracket_is_the_numpy_composite_grid():
+    """신경 arm의 구적과 FEM 쪽 인증·채점 격자가 같은 점이어야 한다(E21)."""
+    from eigen_benchmark.problems import p5_block as p5
+    g = {"kind": "L", "L": 1.0, "b": 0.2, "h": 0.1, "a": 0.5, "E": 1.0, "rho": 1.0, "nu": 0.29}
+    pts, w = p5n.quadrature((16, 8, 6), "cpu", g)
+    P, W = p5._tensor_grid((16, 8, 6), g)
+    assert np.allclose(pts.numpy(), P, atol=0) and np.allclose(w.numpy(), W, atol=0)
+
+
+def test_box_only_paths_refuse_the_l_bracket():
+    g = {"kind": "L", "L": 1.0, "b": 0.2, "h": 0.1, "a": 0.5, "E": 1.0, "rho": 1.0, "nu": 0.29}
+    with pytest.raises(NotImplementedError):
+        p5n.mc_quadrature(100, np.random.default_rng(0), "cpu", g)
+
+
+# ── E22 두 층 이종재료 ─────────────────────────────────────────────────────────
+BI = {"kind": "bilayer", "L": 1.0, "b": 0.2, "h": 0.1, "E": 1.0, "E_top": 0.1,
+      "rho": 1.0, "nu": 0.29}
+
+
+def test_neural_quadrature_on_the_bilayer_is_the_numpy_split_grid():
+    from eigen_benchmark.problems import p5_block as p5
+    pts, w = p5n.quadrature((8, 4, 3), "cpu", BI)
+    P, W = p5._tensor_grid((8, 4, 3), BI)
+    assert np.array_equal(pts.numpy(), P) and np.array_equal(w.numpy(), W)
+
+
+def test_neural_modulus_follows_the_layers_and_stays_a_float_off_them():
+    import torch
+    pts = torch.tensor([[0.5, 0.1, 0.01], [0.5, 0.1, 0.09]], dtype=torch.float64)
+    assert p5n.young_at(pts, BI).tolist() == [1.0, 0.1]
+    E = p5n.young_at(pts, dict(p5n.P5_GEOMETRY))
+    assert isinstance(E, float) and E == p5n.P5_GEOMETRY["E"]
+
+
+def test_neural_energy_is_the_certification_integral_on_the_bilayer():
+    """신경 Rayleigh 몫의 분자·분모는 FEM 쪽 인증 형식과 같은 적분이다(점마다의 영률 포함)."""
+    import torch
+    from eigen_benchmark.problems import p5_block as p5
+    P, W = p5._tensor_grid((12, 6, 4), BI)
+    u, G = p5.manufactured_field(P, BI)
+    a, b = p5._forms_from_field(u, G, W, BI, pts=P)
+    S = torch.as_tensor(np.concatenate([u.T, G.transpose(1, 2, 0).reshape(9, -1)]))
+    lam = p5n.rq_from_state(S, torch.as_tensor(W), BI["nu"],
+                            p5n.young_at(torch.as_tensor(P), BI), BI["rho"])
+    assert float(lam) == pytest.approx(a / b, rel=1e-12)
+
+
+def test_solve_reports_the_audit_quotient_with_the_layer_moduli():
+    """감사 Λ는 점마다의 영률로 잰 값이어야 한다 — 돌려받은 망으로 다시 재면 같다."""
+    import torch
+    from torch.func import vmap
+    out = p5n.solve_p5_neural(n_modes=1, geometry=BI, return_params=True, **TINY)
+    ens = p5n.EnsembleVecMLP3D(TINY["n_seeds"], TINY["width"], TINY["depth"], seed=0,
+                               device="cpu")
+    params = {k: torch.as_tensor(v) for k, v in out["params"][0].items()}
+    pts, w = p5n.quadrature(TINY["audit_grid"], "cpu", BI)
+    E = p5n.young_at(pts, BI)
+    lam = vmap(lambda p: p5n.rq_from_state(p5n._state_one(p, ens.base, pts, None, None, BI),
+                                           w, BI["nu"], E, BI["rho"]))(params)
+    assert np.allclose(lam.numpy(), out["lam"][:, 0], rtol=1e-12, atol=0)
+
+
+def test_monte_carlo_refuses_the_bilayer():
+    with pytest.raises(NotImplementedError):
+        p5n.mc_quadrature(100, np.random.default_rng(0), "cpu", BI)

@@ -324,3 +324,133 @@ def test_point_subspace_mac_reports_the_worst_direction():
     a, b, c = (rng.normal(size=(60, 3)) for _ in range(3))
     got = p5.point_subspace_mac([a, b], [a, c])
     assert got < 0.5
+
+
+# ── L-브래킷(E21) — 상자 셋의 합집합 ─────────────────────────────────────────
+
+L_GEO = {"kind": "L", "L": 1.0, "b": 0.2, "h": 0.1, "a": 0.5, "E": 1.0, "rho": 1.0, "nu": 0.29}
+
+
+def test_l_bracket_mesh_merges_the_shared_faces():
+    """팔1·모서리·팔2를 각자 구조격자로 만들고 경계면 절점을 합친다. 중복 절점이 남으면
+    두 블록이 실제로는 붙어 있지 않다."""
+    m = p5.build_mesh(20, 4, 1, L_GEO)
+    assert m["elems"].shape == (16 * 4 + 4 * 4 + 4 * 10, 27)
+    key = np.round(m["nodes"], 12)
+    assert len(np.unique(key, axis=0)) == len(key)
+    used = np.zeros(len(key), bool)
+    used[m["elems"].ravel()] = True
+    assert used.all()
+    with pytest.raises(ValueError):
+        p5.build_mesh(21, 4, 1, L_GEO)        # Δx ≠ Δy
+
+
+def test_l_bracket_mass_matrix_carries_the_l_volume():
+    K, M = p5.assemble(p5.build_mesh(20, 4, 1, L_GEO), L_GEO)
+    vol = (L_GEO["L"] * L_GEO["b"] + L_GEO["b"] * L_GEO["a"]) * L_GEO["h"]
+    assert float(M[0::3, 0::3].sum()) == pytest.approx(vol, rel=1e-12)
+
+
+def test_an_l_without_its_second_arm_is_the_box():
+    """a = 0이면 둘째 팔이 없어 상자와 같은 메시다(절점 번호만 다르다)."""
+    g0 = {**L_GEO, "a": 0.0}
+    box = {k: v for k, v in L_GEO.items() if k not in ("kind", "a")}
+    lam_l = p5.solve(20, 4, 1, n_modes=4, geometry=g0)["lam"]
+    lam_b = p5.solve(20, 4, 1, n_modes=4, geometry=box)["lam"]
+    # 절점 집합은 같다. 가장 작은 고유값의 풀이 정밀도 바닥이 1e-10 근방이다(같은 상자를 밀집·희소로
+    # 풀어도 7.5e-11 차이) — 메시가 틀리면 차이는 그보다 몇 자리 크다.
+    assert np.allclose(lam_l, lam_b, rtol=1e-9, atol=0)
+
+
+def test_l_bracket_point_evaluation_interpolates_the_nodes():
+    m = p5.build_mesh(20, 4, 1, L_GEO)
+    rng = np.random.default_rng(0)
+    v = rng.normal(size=3 * len(m["nodes"]))
+    idx = rng.choice(len(m["nodes"]), size=40, replace=False)
+    got = p5.eval_mode_at(m, v, m["nodes"][idx])
+    assert np.allclose(got, v.reshape(-1, 3)[idx], atol=1e-12)
+
+
+def test_l_bracket_tensor_grid_integrates_low_order_polynomials_exactly():
+    pts, w = p5._tensor_grid((16, 8, 6), L_GEO)
+    L, b, h, a = (L_GEO[k] for k in ("L", "b", "h", "a"))
+    assert w.sum() == pytest.approx((L * b + b * a) * h, rel=1e-13)
+    # ∫ x dV = h·(b·L²/2 + a·(L² − (L − b)²)/2)
+    want = h * (b * L ** 2 / 2 + a * (L ** 2 - (L - b) ** 2) / 2)
+    assert float(w @ pts[:, 0]) == pytest.approx(want, rel=1e-12)
+    assert (pts[:, 1] <= b + a + 1e-15).all() and not ((pts[:, 0] < L - b) & (pts[:, 1] > b)).any()
+
+
+def test_audit_certification_counts_the_points_the_l_bracket_actually_uses():
+    """감사 격자 행의 점 수는 실제 구적점 수다 — L에서 세 수의 곱은 점 수가 아니다."""
+    r = p5.certify_audit_grid((16, 8, 8), geometry=L_GEO, steps=1)
+    row = r["rows"][0]
+    assert row["grid"] == (24, 12, 12)
+    assert row["n_points"] == len(p5._tensor_grid(row["grid"], L_GEO)[1]) == 6336
+
+
+# ── E22 두 층 이종재료 ─────────────────────────────────────────────────────────
+BI_GEO = {"kind": "bilayer", "L": 1.0, "b": 0.2, "h": 0.1, "E": 1.0, "E_top": 0.1,
+          "rho": 1.0, "nu": 0.29}
+
+
+def test_bilayer_mesh_puts_an_element_face_on_the_interface():
+    """계면 z = h/2가 요소 안을 지나면 요소별 재료가 정의되지 않는다 — n_z는 짝수여야 한다."""
+    m = p5.build_mesh(6, 2, 2, BI_GEO)
+    assert m["shape"] == (6, 2, 2)
+    with pytest.raises(ValueError):
+        p5.build_mesh(6, 2, 3, BI_GEO)
+
+
+def test_bilayer_assembles_each_layer_with_its_own_modulus():
+    """u_x = x(ε_xx = 1)는 hex27가 정확히 담는 선형장이다. 변형률 에너지는 층마다
+    (λ + 2μ)(E)·부피/2의 합이어야 한다."""
+    m = p5.build_mesh(4, 2, 2, BI_GEO)
+    K, _ = p5.assemble(m, BI_GEO)
+    u = np.zeros(K.shape[0])
+    u[0::3] = m["nodes"][:, 0]
+    c = lambda E: p5.isotropic_D(E, BI_GEO["nu"])[0, 0]
+    vol = BI_GEO["L"] * BI_GEO["b"] * BI_GEO["h"]
+    assert u @ (K @ u) == pytest.approx(0.5 * vol * (c(1.0) + c(0.1)), rel=1e-12)
+
+
+def test_bilayer_with_matching_layers_is_the_box_bit_for_bit():
+    box = {k: v for k, v in BI_GEO.items() if k not in ("kind", "E_top")}
+    same = {**BI_GEO, "E_top": BI_GEO["E"]}
+    m = p5.build_mesh(4, 2, 2, box)
+    Kb, Mb = p5.assemble(m, box)
+    Ks, Ms = p5.assemble(p5.build_mesh(4, 2, 2, same), same)
+    assert (Kb != Ks).nnz == 0 and (Mb != Ms).nnz == 0
+
+
+def test_bilayer_tensor_grid_splits_at_the_interface():
+    """두께 방향은 층마다 n_T점의 Gauss — 계면 위에 점이 없고, 층별 상수는 정확히 적분된다."""
+    pts, w = p5._tensor_grid((5, 3, 2), BI_GEO)
+    h = BI_GEO["h"]
+    z = np.unique(np.round(pts[:, 2], 14))
+    assert len(z) == 4 and (z < h / 2).sum() == 2 and np.all(np.abs(z - h / 2) > 1e-6)
+    vol = BI_GEO["L"] * BI_GEO["b"] * h
+    E = p5.young_at(pts, BI_GEO)
+    assert w.sum() == pytest.approx(vol, rel=1e-13)
+    assert (w * E).sum() == pytest.approx(0.5 * vol * (1.0 + 0.1), rel=1e-13)
+
+
+def test_young_modulus_is_a_plain_number_off_the_bilayer():
+    """균질 구조의 경로는 커밋된 산술 그대로여야 한다 — 배열이 아니라 같은 float를 돌려준다."""
+    g = dict(p5.P5_GEOMETRY)
+    assert p5.young_at(np.zeros((3, 3)), g) == g["E"] and isinstance(p5.young_at(np.zeros((3, 3)), g), float)
+
+
+def test_certification_forms_weight_the_energy_by_the_layer_modulus():
+    """a는 층마다 E에 선형이다: a(E₁, E₂) = E₁ a(1, 0) + E₂ a(0, 1). 같은 E면 상자와 같다."""
+    def forms(E1, E2):
+        g = {**BI_GEO, "E": E1, "E_top": E2}
+        pts, w = p5._tensor_grid((20, 10, 6), g)
+        return p5._forms_from_field(*p5.manufactured_field(pts, g), w, g, pts=pts)
+    a, b = forms(1.0, 0.1)
+    assert a == pytest.approx(forms(1.0, 0.0)[0] + 0.1 * forms(0.0, 1.0)[0], rel=1e-12)
+    box = {k: v for k, v in BI_GEO.items() if k not in ("kind", "E_top")}
+    pb, wb = p5._tensor_grid((20, 10, 12), box)
+    ab, bb = p5._forms_from_field(*p5.manufactured_field(pb, box), wb, box)
+    a1, b1 = forms(1.0, 1.0)
+    assert a1 == pytest.approx(ab, rel=1e-9) and b1 == pytest.approx(bb, rel=1e-9)

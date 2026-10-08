@@ -1,0 +1,71 @@
+{
+  "git_sha": "f6d34b792503b2319ad1b4300e21b2c14052f078",
+  "git_branch": "unknown",
+  "git_dirty": true,
+  "timestamp_utc": "2026-10-06T11:05:35.862257+00:00",
+  "python": "3.12.3",
+  "numpy": "2.1.0",
+  "scipy": "1.17.1",
+  "mpmath": "1.3.0",
+  "platform": "Linux 6.17.0-1021-nvidia aarch64",
+  "precision": "fp64 + mpmath dps=50",
+  "driver": "run_p5_neural.tau_calibration",
+  "quick": false,
+  "launch": {
+    "git_sha": "f6d34b792503b2319ad1b4300e21b2c14052f078",
+    "git_dirty": false,
+    "timestamp_utc": "2026-10-06T06:43:58.476908+00:00"
+  },
+  "tau": 20.0,
+  "rule": "90th percentile of the calibration set, rounded UP to the nearest 1/2/5 x 10^k; rounding down would leave 10 % of the calibration set already failing",
+  "n_finite": 24,
+  "n_total": 24,
+  "quantile_90": 16.539151104322023,
+  "seed_base": 9001,
+  "n_seeds": 8,
+  "modes": [
+    1,
+    3,
+    6
+  ],
+  "arm": "exact",
+  "iters": 20000,
+  "audit_grid": [
+    30,
+    15,
+    6
+  ],
+  "resample_every": 250,
+  "tag": "e22_bilayer",
+  "geometry": {
+    "kind": "bilayer",
+    "L": 1.0,
+    "b": 0.2,
+    "h": 0.1,
+    "E": 1.0,
+    "E_top": 0.1,
+    "rho": 1.0,
+    "nu": 0.29
+  },
+  "bc": "clamped_x0",
+  "family_axes": [
+    [
+      16,
+      17,
+      18,
+      19,
+      20
+    ],
+    [
+      8,
+      9,
+      10
+    ],
+    [
+      3,
+      4
+    ]
+  ],
+  "disjoint": "calibration seeds are drawn from base 9001 and the main grid from base 0, so no training stream is shared",
+  "added": "2026-09-06, v2 pre-specification, before any v2 main run"
+}

@@ -317,6 +317,10 @@ def mode_atlas(outdir=None) -> dict:
 # 정사각 단면(b = h)용 대칭 사다리. y·z 요소 수가 같아야 이산 문제도 y ↔ z 대칭이고 굽힘
 # 쌍이 반올림 수준까지 축퇴한다 — 비대칭 메시는 쌍을 인위적으로 벌린다.
 SQUARE_LADDER = [(12, 3, 3), (24, 6, 6), (48, 12, 12)]
+# E21 L-브래킷. 블록 사이 절점이 맞으려면 Δx = Δy라 n_x = 5 n_y이고(L/b = 5), 두께 방향은
+# 요소가 정육면체가 되게 n_z = n_y/2로 둔다(h = b/2). 두께 방향 요소가 하나인 단에서 시작하는
+# 사다리 (20, 4, 1) → (80, 16, 4)는 비틀림(모드 6)의 첫 쌍 인증이 0.991로 문턱 0.999에 못 미친다.
+L_LADDER = [(20, 4, 2), (40, 8, 4), (80, 16, 8)]
 REFERENCE_CERT_GRID = (16, 8, 8)
 
 
@@ -337,6 +341,9 @@ def structure_reference(tag: str, geo_delta: dict, faces: str = "x0", ladder=Non
     from .run_p5_neural import clusters_from_gaps
 
     d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    # 컨테이너의 git은 저장소 소유자가 달라 status를 거부하므로 build()의 git_dirty는 늘 참이다.
+    # 시작 시점의 출처를 따로 싣는다.
+    launch = manifest.launch_provenance()
     ladder = [tuple(int(v) for v in lv) for lv in (LADDER if ladder is None else ladder)]
     cert_grid = tuple(int(v) for v in cert_grid)
     g = {**p5.P5_GEOMETRY, **geo_delta}
@@ -430,7 +437,8 @@ def structure_reference(tag: str, geo_delta: dict, faces: str = "x0", ladder=Non
                                  "equals the per-mode self-MAC for a singleton"}
     manifest.write_json(os.path.join(d, f"p5_reference_{tag}.json"), out)
     manifest.write_json(os.path.join(d, f"manifest_p5_reference_{tag}.json"), manifest.build({
-        "driver": "run_p5.structure_reference", "tag": tag, "geometry": g, "faces": faces,
+        "driver": "run_p5.structure_reference", "tag": tag, "launch": launch,
+        "geometry": g, "faces": faces,
         "ladder": [list(lv) for lv in ladder], "cert_grid": list(cert_grid),
         "n_modes": n_modes, "n_used": n_used, "clusters": [list(c) for c in clusters],
         "worst_extrapolation_residual": worst_res, "worst_shape_cert": worst_cert}))

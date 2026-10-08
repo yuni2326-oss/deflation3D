@@ -31,6 +31,11 @@ def quadrature(grid=CERTIFIED_GRID, device: str = "cpu", geometry=None):
     한 번의 텐서곱으로 끝난다."""
     torch.set_default_dtype(torch.float64)
     g = P5_GEOMETRY if geometry is None else geometry
+    if g.get("kind") in ("L", "bilayer"):
+        # L-브래킷(E21)·두 층(E22): FEM 쪽 인증·채점 격자와 같은 합성 Gauss를 쓴다.
+        from ..problems.p5_block import _tensor_grid
+        P, W = _tensor_grid(grid, g)
+        return torch.as_tensor(P, device=device), torch.as_tensor(W, device=device)
     axes, wts = [], []
     for n, length in zip(grid, (g["L"], g["b"], g["h"])):
         p, ww = gauss_legendre(int(n), 0.0, float(length))
@@ -67,6 +72,8 @@ def mc_quadrature(n_points: int, rng, device: str = "cpu", geometry=None):
     뽑으므로 재표집 시드가 같으면 비트 단위로 재현된다."""
     torch.set_default_dtype(torch.float64)
     g = P5_GEOMETRY if geometry is None else geometry
+    if g.get("kind") is not None:
+        raise NotImplementedError("몬테카를로 구적은 균질 상자만 지원한다(L-브래킷·두 층은 합성 Gauss)")
     hi = np.array([g["L"], g["b"], g["h"]], dtype=float)
     pts = torch.as_tensor(rng.uniform(size=(int(n_points), 3)) * hi, device=device)
     vol = float(hi.prod())
@@ -152,6 +159,16 @@ def state_batch(ens: EnsembleVecMLP3D, pts, scale=None, bc=None, geometry=None):
     """전 시드의 상태 (n_seeds, 12, n_q)."""
     g = P5_GEOMETRY if geometry is None else geometry
     return vmap(lambda p: _state_one(p, ens.base, pts, scale, bc, g))(ens.params)
+
+
+def young_at(pts, g):
+    """점마다의 영률. 두 층 구조(E22)는 z < h/2에서 E, 그 위에서 E_top인 텐서다. 그 밖의 구조는
+    커밋된 산술이 그대로이도록 float 하나를 돌려준다."""
+    if g.get("kind") != "bilayer":
+        return float(g["E"])
+    lo = torch.tensor(float(g["E"]), dtype=pts.dtype, device=pts.device)
+    hi = torch.tensor(float(g["E_top"]), dtype=pts.dtype, device=pts.device)
+    return torch.where(pts[:, 2] < 0.5 * float(g["h"]), lo, hi)
 
 
 def rq_from_state(S, w, nu: float, E: float = 1.0, rho: float = 1.0):
@@ -391,6 +408,8 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
     # E8(검토 §4.3): 망이 보는 좌표를 축별로 [0,1]³에 맞춘다. 원좌표는 축 스케일이
     # 최대 25배 다르다(z ∈ (0, 0.04)). **솔버 변인이지 계기가 아니다** — 켜면 시행공간이
     # 달라지므로 커밋된 실행과 비트 비교를 기대하지 않는다.
+    if normalize_input and g.get("kind") == "L":
+        raise NotImplementedError("입력 정규화는 상자 영역만 지원한다")
     sc = (torch.tensor([g["L"], g["b"], g["h"]], device=device or
                        ("cuda" if torch.cuda.is_available() else "cpu"))
           if normalize_input else None)
@@ -400,6 +419,8 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
     # 감사 격자를 주지 않으면 훈련 격자가 곧 감사 격자다(v1 동작).
     pts_a, w_a = (quadrature(audit_grid, dev, g) if audit_grid is not None
                   else (pts, w))
+    # 점마다의 영률(E22 두 층). 균질 구조에서는 E와 같은 float라 커밋된 산술이 그대로다.
+    E_a = young_at(pts_a, g)
 
     lam, lam_train, prevs, stage_secs, hists, span_diag = [], [], [], [], [], []
     ensembles = []   # 재검·재표집에 학습된 파라미터가 필요하다
@@ -451,7 +472,7 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
             S = _state_one(p, ens.base, pts_a, sc, dist, g)
             if prev:
                 S = proj(S, torch.stack(prev, 0), w_a)
-            return rq_from_state(S, w_a, nu, E, rho)
+            return rq_from_state(S, w_a, nu, E_a, rho)
 
         # **진단은 사영 전에, 그 스테이지가 실제로 넘겨받는 원시 후보에서 잰다.**
         # 보고되는 양이므로 감사 격자에서 잰다(v2 §2.2).
@@ -468,6 +489,7 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
         hist = []
         stage_off = []
         cur_pts, cur_w = pts, w
+        E_cur = young_at(cur_pts, g)
         cur_stack = _stack_at(cur_pts, k)
         t0 = time.perf_counter()
         for it in range(iters + 1):
@@ -479,6 +501,7 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
                     cur_pts, cur_w = mc_quadrature(mc_points, rng, dev, g)
                 else:
                     cur_pts, cur_w = family[int(rng.integers(len(family)))]
+                E_cur = young_at(cur_pts, g)
                 grids_used.add(int(len(cur_w)))
                 cur_stack = _stack_at(cur_pts, k)
 
@@ -486,7 +509,7 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
                 S = _state_one(p, ens.base, cur_pts, sc, dist, g)
                 if prev:
                     S = proj(S, torch.stack(prev, 0), cur_w)
-                return rq_from_state(S, cur_w, nu, E, rho)
+                return rq_from_state(S, cur_w, nu, E_cur, rho)
 
             r = vmap(loss_cur)(ens.params, *cur_stack)
             if it % snapshot_every == 0 or it == iters:
@@ -526,7 +549,7 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
                 S = _state_one(p, ens.base, cur_pts, sc, dist, g)
                 if prev:
                     S = proj(S, torch.stack(prev, 0), cur_w)
-                return rq_from_state(S, cur_w, nu, E, rho)
+                return rq_from_state(S, cur_w, nu, E_cur, rho)
             lam_train.append(vmap(_loss_train)(ens.params, *cur_stack)
                              .cpu().numpy().copy())
 
@@ -591,6 +614,7 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
         measured = [base]
         for gg in rungs:
             pts2, w2 = quadrature(gg, dev, g)
+            E2 = young_at(pts2, g)
             with torch.no_grad():
                 prev2, chk = [], []
                 raw2 = [vmap(lambda p, e=e: _state_one(p, e.base, pts2, sc, dist, g))(e.params)
@@ -602,7 +626,7 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
                             S2, *tuple(prev2))
                     else:
                         Sp2 = S2
-                    chk.append(vmap(lambda s_: rq_from_state(s_, w2, nu, E, rho))(Sp2)
+                    chk.append(vmap(lambda s_: rq_from_state(s_, w2, nu, E2, rho))(Sp2)
                                .cpu().numpy().copy())
                     prev2.append(stored2[i2].detach())
             measured.append(np.asarray(chk).T)

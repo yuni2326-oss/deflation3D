@@ -280,3 +280,202 @@ def test_mixing_regression_separates_a_sloped_from_a_flat_response():
     flat = -0.5 + 0.05 * rng.normal(size=20)
     assert st.mixing_regression(mu, sloped, B=2000)["verdict"] == "rule_a"
     assert st.mixing_regression(mu, flat, B=2000)["verdict"] == "rule_b"
+
+
+# ── 후속 E17–E20 (사전규정 2026-10-02-p5-e17-e20-prespecification.md) ──────
+
+def _acc_recs(acc_at, n_seeds=20, modes=(1, 2, 3, 4, 5, 6), outcome="correct"):
+    """acc_at(mode, seed) → bool. 게이트 없는 정확(st.accurate)이 그 값이 되도록 만든다."""
+    out = []
+    for s in range(n_seeds):
+        for m in modes:
+            ok = acc_at(m, s)
+            out.append({"mode": m, "seed": s, "outcome": outcome if ok else "spurious",
+                        "matched_mode": m if ok else m + 1, "mac": 0.99, "e_lam": 0.01,
+                        "cluster": [m]})
+    return out
+
+
+def test_unpaired_bootstrap_resamples_the_two_groups_independently():
+    a, b = np.ones(20), np.zeros(20)
+    pt, lo, hi = st.unpaired_bootstrap(a, b, B=500)
+    assert pt == lo == hi == 1.0
+    pt, lo, hi = st.unpaired_bootstrap(np.r_[np.ones(10), np.zeros(10)], np.zeros(20), B=2000)
+    assert pt == pytest.approx(0.5) and 0.2 < lo < 0.5 < hi < 0.8
+
+
+def test_e17_separates_placement_from_frequency():
+    """MC 두 칸만 좋으면 배치 주효과(규칙 1), 매 반복 두 칸만 좋으면 빈도 주효과(규칙 2)다."""
+    good, bad = _acc_recs(lambda m, s: True), _acc_recs(lambda m, s: m < 4)
+    r = st.e17_from_cells({("gauss", 250): bad, ("gauss", 1): bad, ("mc", 250): good,
+                           ("mc", 1): good}, B=500)
+    assert r["verdict"] == {"rule1": True, "rule2": False, "rule3": False, "indecomposable": False}
+    r = st.e17_from_cells({("gauss", 250): bad, ("gauss", 1): good, ("mc", 250): bad,
+                           ("mc", 1): good}, B=500)
+    assert r["verdict"]["rule2"] and not r["verdict"]["rule1"]
+
+
+def test_e18_compares_the_diagonal_mode3_across_structures_without_pairing():
+    e16 = _acc_recs(lambda m, s: m != 3)
+    e18 = {"diagonal": _acc_recs(lambda m, s: True), "exact": _acc_recs(lambda m, s: True)}
+    spans = [{"k": "2", "stage_mode": "3", "seed": str(s), "max_offdiag": "0.01"} for s in range(20)]
+    obs = {"x": np.tile([-3.0, -2.5, -2.0, -1.5, -1.0, -0.5], 20),
+           "y": (np.random.default_rng(7).uniform(size=120) < 0.5).astype(float),
+           "seed": np.repeat(np.arange(20), 6), "k": np.full(120, 2), "structure": np.zeros(120, int)}
+    r = st.e18_from_records(e18, spans, e16, obs, B=500)
+    assert r["primary"]["contrast"][0] == pytest.approx(1.0) and r["primary"]["verdict"] == "rule1"
+    assert "e14_transfer" in r and r["correct_mode3"] == {"e18_diagonal": 20, "e16_diagonal": 0}
+
+
+def test_e19_reads_modes_5_and_6_without_the_gate():
+    e16x = _acc_recs(lambda m, s: m < 5)
+    fixed = _acc_recs(lambda m, s: True, outcome="non_converged")   # 게이트에 걸려도 정확
+    r = st.e19_from_records({"e19_budget": fixed, "e19_norm": e16x}, e16x, B=500)
+    assert r["e19_budget"]["verdict"] == "rule1" and r["e19_budget"]["contrast"][0] == 1.0
+    assert r["e19_norm"]["verdict"] == "rule2"
+
+
+def test_e20_contrast_is_large_sample_minus_e15r():
+    r = st.e20_from_records(_acc_recs(lambda m, s: True), _acc_recs(lambda m, s: m < 5), B=500)
+    assert r["contrast"][0] == pytest.approx(2 / 3) and r["verdict"] == "rule1"
+
+
+# ── E21 L-브래킷 (사전규정 2026-10-04-p5-e21-prespecification.md) ─────────────
+
+def _e21_recs(correct_at, n_seeds=20, modes=(1, 2, 3, 4, 5, 6), fail="lower_mode_basin"):
+    """correct_at(mode, seed) → bool. 게이트 없는 정확도 correct와 같아지도록 필드를 채운다."""
+    out = []
+    for s in range(n_seeds):
+        for m in modes:
+            ok = correct_at(m, s)
+            out.append({"mode": m, "seed": s, "outcome": "correct" if ok else fail,
+                        "matched_mode": m if ok else max(1, m - 1), "mac": 0.99,
+                        "e_lam": 0.01, "cluster": [m]})
+    return out
+
+
+def _e21_spans(c2, c3):
+    rows = [{"k": "2", "stage_mode": "3", "seed": str(s), "max_offdiag": str(c)}
+            for s, c in enumerate(c2)]
+    return rows + [{"k": "3", "stage_mode": "4", "seed": str(s), "max_offdiag": str(c)}
+                   for s, c in enumerate(c3)]
+
+
+def test_e21_primary_contrast_is_exact_minus_diagonal_over_modes_4_to_6():
+    recs = {"exact": _e21_recs(lambda m, s: True),
+            "diagonal": _e21_recs(lambda m, s: m < 4),
+            "qr": _e21_recs(lambda m, s: m < 5)}
+    spans = {a: _e21_spans([0.01] * 20, [0.95] * 20) for a in recs}
+    r = st.e21_from_records(recs, spans, _obs14(), B=2000)
+    assert r["instrument_ok"] and r["primary"]["verdict"] == "rule1"
+    assert r["primary"]["contrast"][0] == pytest.approx(1.0) and r["primary"]["floor"] is False
+    assert r["other_contrasts"]["qr_minus_diagonal"][0] == pytest.approx(1 / 3)
+    assert r["other_contrasts"]["exact_minus_qr"][0] == pytest.approx(2 / 3)
+    assert r["failure_forms_4_6"]["diagonal"] == {"lower_mode_basin": 60}
+    assert r["correct_by_mode"]["qr"][4] == 20 and r["accurate_by_mode"]["qr"][5] == 0
+    assert r["c_median_by_arm"]["exact"] == {2: pytest.approx(0.01), 3: pytest.approx(0.95)}
+
+
+def test_e21_is_not_read_when_stage_2_fails_and_flags_a_floor():
+    """모드 2는 저장이 하나라 세 규칙이 정확 사영과 같다 — 거기서 실패하면 읽지 않는다."""
+    bad = _e21_recs(lambda m, s: m != 2)
+    spans = {a: _e21_spans([0.01] * 20, [0.95] * 20) for a in ("exact", "diagonal", "qr")}
+    r = st.e21_from_records({a: bad for a in spans}, spans, _obs14(), B=500)
+    assert not r["instrument_ok"] and r["primary"]["verdict"] == "not_read"
+    low = {"exact": _e21_recs(lambda m, s: m < 4 or (m == 4 and s < 5)),
+           "diagonal": _e21_recs(lambda m, s: m < 4), "qr": _e21_recs(lambda m, s: m < 4)}
+    assert st.e21_from_records(low, spans, _obs14(), B=500)["primary"]["floor"] is True
+
+
+def test_e21_transfer_pools_stages_2_and_3_of_the_diagonal_arm():
+    """S1은 E14 법칙의 관측 단위(시드 × k ∈ {2, 3})를 그대로 쓴다. 관측은 대각 arm의 모드 3·4
+    correct 합이다."""
+    recs = {"exact": _e21_recs(lambda m, s: True),
+            "diagonal": _e21_recs(lambda m, s: m <= 3),
+            "qr": _e21_recs(lambda m, s: True)}
+    c2, c3 = [0.01 + 0.001 * s for s in range(20)], [0.95] * 20
+    spans = {a: _e21_spans(c2, c3) for a in recs}
+    obs = _obs14()
+    r = st.e21_from_records(recs, spans, obs, B=500)
+    assert r["e14_transfer"] == st.e14_transfer(np.log10(c2 + c3), 20, obs, B=500)
+    assert r["e14_transfer"]["n"] == 40
+    assert r["e14_transfer_by_stage"][2]["observed"] == 20
+    assert r["e14_transfer_by_stage"][3]["observed"] == 0
+    assert r["e14_transfer_k2_only"]["n"] == 40
+
+
+def test_e21_refuses_a_span_row_whose_target_is_not_the_next_mode():
+    recs = {a: _e21_recs(lambda m, s: True) for a in ("exact", "diagonal", "qr")}
+    spans = {a: _e21_spans([0.01] * 20, [0.95] * 20) for a in recs}
+    spans["diagonal"][25] = {**spans["diagonal"][25], "stage_mode": "5"}
+    with pytest.raises(ValueError):
+        st.e21_from_records(recs, spans, _obs14(), B=200)
+
+
+# ── E22 두 층 이종재료 (사전규정 2026-10-04-p5-e22-prespecification.md) ───────
+
+def test_e22_uses_the_same_rules_as_e21_and_compares_with_e13a_without_the_gate():
+    recs = {"exact": _e21_recs(lambda m, s: True),
+            "diagonal": _e21_recs(lambda m, s: m < 4),
+            "qr": _e21_recs(lambda m, s: m < 5)}
+    spans = {a: _e21_spans([0.01] * 20, [0.95] * 20) for a in recs}
+    obs = _obs14()
+    r22 = st.e22_from_records(recs, spans, obs, B=500)
+    r21 = st.e21_from_records(recs, spans, obs, B=500)
+    for k in ("primary", "other_contrasts", "e14_transfer", "correct_by_mode"):
+        assert r22[k] == r21[k]
+    e13 = {"exact": _e21_recs(lambda m, s: m < 5), "diagonal": _e21_recs(lambda m, s: m < 4),
+           "qr": _e21_recs(lambda m, s: m < 4)}
+    r = st.e22_from_records(recs, spans, obs, recs13a=e13, B=500)
+    assert r["vs_e13a_gate_free"]["exact"][0] == pytest.approx(2 / 3)
+    assert r["vs_e13a_gate_free"]["diagonal"][0] == pytest.approx(0.0)
+
+
+def test_shape_right_cells_report_their_eigenvalue_error():
+    """형상은 맞은 셀(정합 = 목표, MAC ≥ 0.9)의 e_λ — 모서리 특이(E21)·계면(E22)의 값을 본다."""
+    recs = _e21_recs(lambda m, s: True)
+    for r in recs:
+        if r["mode"] == 4:
+            r["e_lam"] = 0.021 + 0.01 * r["seed"]       # 0.021 … 0.211
+    got = st.elam_shape_right(recs)
+    assert got[4]["n"] == 20 and got[4]["median"] == pytest.approx(0.116)
+    assert got[4]["over_threshold"] == 17                # e_λ > 0.05
+    assert got[1]["median"] == pytest.approx(0.01) and got[1]["over_threshold"] == 0
+    r21 = st.e21_from_records({a: recs for a in ("exact", "diagonal", "qr")},
+                              {a: _e21_spans([0.01] * 20, [0.95] * 20) for a in ("exact", "diagonal", "qr")},
+                              _obs14(), B=200)
+    assert r21["elam_shape_right"]["exact"][4]["over_threshold"] == 17
+
+
+# ── E21b L-브래킷 정확 arm 매 반복 재추첨 (사전규정 2026-10-06-p5-e21b-prespecification.md) ──
+
+def _exploit_recs(n_seeds=20, below=(), ratio=1.0):
+    """모드 4의 seeds in below에서 훈련 Λ가 참조 아래, 감사/훈련 비 ratio."""
+    out = []
+    for s in range(n_seeds):
+        for m in (1, 2, 3, 4, 5, 6):
+            bad = m == 4 and s in below
+            out.append({"mode": m, "seed": s, "outcome": "spurious" if bad else "correct",
+                        "matched_mode": m, "mac": 0.99, "e_lam": 0.9 if bad else 0.01,
+                        "Lam_ref": 1.0, "Lam_train": 0.5 if bad else 1.0,
+                        "Lam": 0.5 * ratio if bad else 1.0, "ladder_tail_spread": 0.1 if bad else 1e-6})
+    return out
+
+
+def test_training_exploitation_counts_cells_below_the_rayleigh_bound_on_the_training_grid():
+    got = st.training_exploitation(_exploit_recs(below=range(5), ratio=40.0))
+    assert got[4]["train_below_ref"] == 5 and got[1]["train_below_ref"] == 0
+    assert got[4]["median_audit_over_train_failing"] == pytest.approx(40.0)
+    assert got[1]["median_audit_over_train_failing"] is None
+
+
+def test_e21b_contrast_is_redrawn_minus_e21_exact_on_gate_free_accuracy():
+    g1 = _acc_recs(lambda m, s: True)
+    ex = _acc_recs(lambda m, s: m < 4)
+    for r_ in g1 + ex:
+        r_.update(Lam=1.0, Lam_train=1.0, Lam_ref=1.0, ladder_tail_spread=1e-6)
+    r = st.e21b_from_records(g1, ex, B=2000)
+    assert r["contrast"][0] == pytest.approx(1.0) and r["verdict"] == "rule1"
+    assert r["acc_4_6"] == {"e21lb_exact_g1": 60, "e21lb_exact": 0}
+    assert set(r["exploitation"]) == {"e21lb_exact_g1", "e21lb_exact"}
+    assert st.e21b_from_records(ex, ex, B=500)["verdict"] == "rule2"

@@ -1,0 +1,82 @@
+{
+  "git_sha": "572c54f4c9a21929440e53742524fad884ddade0",
+  "git_branch": "unknown",
+  "git_dirty": true,
+  "timestamp_utc": "2026-10-04T02:56:25.633590+00:00",
+  "python": "3.12.3",
+  "numpy": "2.1.0",
+  "scipy": "1.17.1",
+  "mpmath": "1.3.0",
+  "platform": "Linux 6.17.0-1026-nvidia aarch64",
+  "precision": "fp64 + mpmath dps=50",
+  "driver": "run_p5.structure_reference",
+  "tag": "e21_lbracket",
+  "launch": {
+    "git_sha": "572c54f4c9a21929440e53742524fad884ddade0",
+    "git_dirty": false,
+    "timestamp_utc": "2026-10-04T02:51:23.346269+00:00"
+  },
+  "geometry": {
+    "L": 1.0,
+    "b": 0.2,
+    "h": 0.1,
+    "E": 1.0,
+    "rho": 1.0,
+    "nu": 0.29,
+    "kind": "L",
+    "a": 0.5
+  },
+  "faces": "x0",
+  "ladder": [
+    [
+      20,
+      4,
+      2
+    ],
+    [
+      40,
+      8,
+      4
+    ],
+    [
+      80,
+      16,
+      8
+    ]
+  ],
+  "cert_grid": [
+    24,
+    12,
+    12
+  ],
+  "n_modes": 8,
+  "n_used": 6,
+  "clusters": [
+    [
+      1
+    ],
+    [
+      2
+    ],
+    [
+      3
+    ],
+    [
+      4
+    ],
+    [
+      5
+    ],
+    [
+      6
+    ],
+    [
+      7
+    ],
+    [
+      8
+    ]
+  ],
+  "worst_extrapolation_residual": 0.002578818900596516,
+  "worst_shape_cert": 0.9993082996135119
+}

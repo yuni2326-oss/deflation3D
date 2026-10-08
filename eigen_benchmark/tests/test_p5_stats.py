@@ -479,3 +479,17 @@ def test_e21b_contrast_is_redrawn_minus_e21_exact_on_gate_free_accuracy():
     assert r["acc_4_6"] == {"e21lb_exact_g1": 60, "e21lb_exact": 0}
     assert set(r["exploitation"]) == {"e21lb_exact_g1", "e21lb_exact"}
     assert st.e21b_from_records(ex, ex, B=500)["verdict"] == "rule2"
+
+
+# ── E21c L-브래킷 정확 arm 촘촘한 격자족 (사전규정 2026-10-08-p5-e21c-prespecification.md) ──
+
+def test_e21c_uses_the_e21b_quantity_against_the_same_e21_exact_arm():
+    dense = _acc_recs(lambda m, s: m < 5)
+    ex = _acc_recs(lambda m, s: m < 4)
+    for r_ in dense + ex:
+        r_.update(Lam=1.0, Lam_train=1.0, Lam_ref=1.0, ladder_tail_spread=1e-6)
+    r = st.e21c_from_records(dense, ex, B=2000)
+    assert r["contrast"][0] == pytest.approx(1 / 3) and r["verdict"] == "rule1"
+    assert r["acc_4_6"] == {"e21lb_exact_dense": 20, "e21lb_exact": 0}
+    rb = st.e21b_from_records(dense, ex, B=2000)
+    assert rb["contrast"] == r["contrast"] and rb["acc_4_6"] == {"e21lb_exact_g1": 20, "e21lb_exact": 0}

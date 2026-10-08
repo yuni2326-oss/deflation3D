@@ -1,8 +1,8 @@
 {
-  "git_sha": "ebb215ba59dbd97a2a3a414a4ce1d1336530690f",
+  "git_sha": "87aa2bc71cdbed62436d7ca6f0d66bdfaec948ea",
   "git_branch": "unknown",
   "git_dirty": true,
-  "timestamp_utc": "2026-10-08T00:34:36.053550+00:00",
+  "timestamp_utc": "2026-10-08T20:36:04.055298+00:00",
   "python": "3.12.3",
   "numpy": "2.1.0",
   "scipy": "1.17.1",

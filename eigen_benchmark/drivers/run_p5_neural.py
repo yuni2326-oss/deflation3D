@@ -1345,6 +1345,35 @@ def e21b_run(outdir=None, device=None) -> dict:
     return grid_v2(outdir=d, device=device, tau=tau, **e21b_settings())
 
 
+
+# ── E21c (사전규정 2026-10-08-p5-e21c-prespecification.md) ─────────────────────
+# E21 정확 arm의 격자족만 촘촘하게 한다 — 팔의 단위 길이당 16–20점으로 기준 구조와 같은 밀도다. E21b는
+# 매 반복 재추첨으로도 훈련 격자 하한 위반이 남아 격자족 전체의 밀도 부족을 가리켰다. 감사 격자와 사다리는
+# 1.5배 여유를 지키도록 함께 키운다(감사 (30, 15, 12)는 인증을 통과한다). τ는 E21의 것(보조).
+E21C_TAG = "e21lb_exact_dense"
+E21C_FAMILY_AXES = ((16, 17, 18, 19, 20), (8, 9, 10), (6, 7, 8))
+E21C_AUDIT_GRID = (30, 15, 12)
+E21C_CHECK_GRID = (40, 20, 16)
+E21C_LADDER = ((40, 20, 16), (60, 30, 24), (80, 40, 32))
+
+
+def e21c_settings() -> dict:
+    return {**e21_settings("exact"), "tag": E21C_TAG, "family_axes": E21C_FAMILY_AXES,
+            "audit_grid": E21C_AUDIT_GRID, "check_grid": E21C_CHECK_GRID,
+            "check_grids": list(E21C_LADDER)}
+
+
+def e21c_run(outdir=None, device=None) -> dict:
+    """E21c. τ는 `manifest_p5_tau_e21_lbracket.json`에서 읽고, 없으면 거부한다."""
+    import json
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    p = os.path.join(d, f"manifest_p5_tau_{E21_TAU_TAG}.json")
+    if not os.path.exists(p):
+        raise FileNotFoundError(f"{p}가 없다 — E21 τ 보정이 먼저다")
+    tau = float(json.load(open(p, encoding="utf-8"))["tau"])
+    return grid_v2(outdir=d, device=device, tau=tau, **e21c_settings())
+
+
 # ── E22 두 층 이종재료 (사전규정 2026-10-04-p5-e22-prespecification.md) ────────────
 # E13-a 상자(h = 0.10)를 두께 방향 두 층으로 나눈다. z < h/2는 E = 1(E13-a와 같은 재료), 위는 E = 0.1.
 # 밀도·포아송비는 같아 질량 내적(사영·MAC)이 균질과 같고 강성 불연속만 달라진다. 구적 격자

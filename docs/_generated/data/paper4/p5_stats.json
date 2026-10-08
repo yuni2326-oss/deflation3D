@@ -815,6 +815,108 @@
       }
     }
   },
+  "e21c": {
+    "contrast": [
+      0.06666666666666668,
+      -0.01666666666666669,
+      0.15
+    ],
+    "verdict": "rule2",
+    "acc_4_6": {
+      "e21lb_exact_dense": 11,
+      "e21lb_exact": 7
+    },
+    "accurate_by_mode": {
+      "e21lb_exact_dense": {
+        "1": 20,
+        "2": 17,
+        "3": 19,
+        "4": 1,
+        "5": 10,
+        "6": 0
+      },
+      "e21lb_exact": {
+        "1": 18,
+        "2": 19,
+        "3": 7,
+        "4": 0,
+        "5": 7,
+        "6": 0
+      }
+    },
+    "exploitation": {
+      "e21lb_exact_dense": {
+        "1": {
+          "train_below_ref": 0,
+          "median_audit_over_train_failing": null
+        },
+        "2": {
+          "train_below_ref": 2,
+          "median_audit_over_train_failing": 178.06489199100375
+        },
+        "3": {
+          "train_below_ref": 1,
+          "median_audit_over_train_failing": 2.89525149665333
+        },
+        "4": {
+          "train_below_ref": 15,
+          "median_audit_over_train_failing": 47.8428287325402
+        },
+        "5": {
+          "train_below_ref": 8,
+          "median_audit_over_train_failing": 144.52055339602782
+        },
+        "6": {
+          "train_below_ref": 15,
+          "median_audit_over_train_failing": 75.74488990729078
+        }
+      },
+      "e21lb_exact": {
+        "1": {
+          "train_below_ref": 3,
+          "median_audit_over_train_failing": 857.068129880856
+        },
+        "2": {
+          "train_below_ref": 1,
+          "median_audit_over_train_failing": 2.83136917666117
+        },
+        "3": {
+          "train_below_ref": 11,
+          "median_audit_over_train_failing": 9.82642449321136
+        },
+        "4": {
+          "train_below_ref": 17,
+          "median_audit_over_train_failing": 106.98098352746523
+        },
+        "5": {
+          "train_below_ref": 11,
+          "median_audit_over_train_failing": 107.7642277899715
+        },
+        "6": {
+          "train_below_ref": 19,
+          "median_audit_over_train_failing": 31.776433513105395
+        }
+      }
+    },
+    "ladder_unresolved": {
+      "e21lb_exact_dense": {
+        "1": 0,
+        "2": 2,
+        "3": 2,
+        "4": 17,
+        "5": 11,
+        "6": 18
+      },
+      "e21lb_exact": {
+        "1": 3,
+        "2": 1,
+        "3": 13,
+        "4": 20,
+        "5": 14,
+        "6": 20
+      }
+    }
+  },
   "e22": {
     "correct_by_mode": {
       "diagonal": {

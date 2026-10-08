@@ -790,13 +790,13 @@ def training_exploitation(recs) -> dict:
 E21B_TAG = "e21lb_exact_g1"
 
 
-def e21b_from_records(recs_g1, recs_exact, B: int = B_DEFAULT, seed: int = SEED) -> dict:
-    """D = acc₄₋₆(매 반복) − acc₄₋₆(E21 정확), 게이트 없는 정확도, 시드 짝지음(E17·E19와 같은 판정량).
-    규칙 1(0 제외, 양수) → 매 반복 재추첨이 L에서 정확 사영의 복구를 되살린다."""
-    a = _seed_share(recs_g1, accurate, E21_MODES)
+def _vs_e21_exact(recs_new, recs_exact, new_tag: str, B: int, seed: int) -> dict:
+    """L-브래킷 정확 arm 한 조건 대 E21 정확 arm(E21b·E21c 공통). D = acc₄₋₆(조건) − acc₄₋₆(E21 정확),
+    게이트 없는 정확도, 시드 짝지음(E17·E19와 같은 판정량)."""
+    a = _seed_share(recs_new, accurate, E21_MODES)
     b = _seed_share(recs_exact, accurate, E21_MODES)
     ci = paired_bootstrap(a, b, B, seed)
-    named = {E21B_TAG: recs_g1, E21_TAGS["exact"]: recs_exact}
+    named = {new_tag: recs_new, E21_TAGS["exact"]: recs_exact}
     return {"contrast": ci, "verdict": _rule(ci),
             "acc_4_6": {k: _n_acc(rs, E21_MODES) for k, rs in named.items()},
             "accurate_by_mode": {k: {m: int(sum(accurate(r) for r in rs if r["mode"] == m))
@@ -806,6 +806,28 @@ def e21b_from_records(recs_g1, recs_exact, B: int = B_DEFAULT, seed: int = SEED)
             "ladder_unresolved": {k: {m: ladder_counts([r for r in rs if r["mode"] == m])["unresolved"]
                                       for m in sorted({r["mode"] for r in rs})}
                                   for k, rs in named.items()}}
+
+
+def e21b_from_records(recs_g1, recs_exact, B: int = B_DEFAULT, seed: int = SEED) -> dict:
+    """규칙 1(0 제외, 양수) → 매 반복 재추첨이 L에서 정확 사영의 복구를 되살린다."""
+    return _vs_e21_exact(recs_g1, recs_exact, E21B_TAG, B, seed)
+
+
+# E21c — E21 정확 arm의 격자족을 촘촘하게(사전규정 2026-10-08-p5-e21c-prespecification.md).
+E21C_TAG = "e21lb_exact_dense"
+
+
+def e21c_from_records(recs_dense, recs_exact, B: int = B_DEFAULT, seed: int = SEED) -> dict:
+    """규칙 1(0 제외, 양수) → 촘촘한 격자족이 L에서 정확 사영의 복구를 되살린다(밀도 부족이 원인)."""
+    return _vs_e21_exact(recs_dense, recs_exact, E21C_TAG, B, seed)
+
+
+def e21c(data_dir: str = DATA_DIR) -> dict | None:
+    try:
+        dense, ex = load(data_dir, E21C_TAG), load(data_dir, E21_TAGS["exact"])
+    except FileNotFoundError:
+        return None
+    return e21c_from_records(dense, ex)
 
 
 def e21b(data_dir: str = DATA_DIR) -> dict | None:
@@ -875,7 +897,7 @@ def main(data_dir: str = DATA_DIR, outdir: str | None = None) -> dict:
            "e15": e15(data_dir),
            "e16": e16(data_dir),
            "e17": e17(data_dir), "e18": e18(data_dir), "e19": e19(data_dir), "e20": e20(data_dir),
-           "e21": e21(data_dir), "e21b": e21b(data_dir), "e22": e22(data_dir),
+           "e21": e21(data_dir), "e21b": e21b(data_dir), "e21c": e21c(data_dir), "e22": e22(data_dir),
            "e14_registered": e14_registered(obs),
            "e14_fixed_effects": e14_fixed_effects(obs),
            "e14_sensitivity_post_hoc": e14_sensitivity(obs)}

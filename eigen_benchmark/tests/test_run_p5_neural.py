@@ -1165,3 +1165,40 @@ def test_e21b_run_reads_the_e21_tau_and_refuses_without_it(tmp_path, monkeypatch
     monkeypatch.setattr(run, "grid_v2", lambda **kw: got.update(kw) or {"verdicts": None})
     run.e21b_run(outdir=str(tmp_path), device="cpu")
     assert got["tau"] == 10.0 and got["resample_every"] == 1 and got["tag"] == "e21lb_exact_g1"
+
+
+def test_e21c_is_the_e21_exact_arm_with_a_denser_family():
+    """사전규정 2026-10-08 E21c — E21 정확 arm과 격자족 밀도(와 그에 맞춘 감사·사다리)만 다르다."""
+    import math
+    k, base = run.e21c_settings(), run.e21_settings("exact")
+    changed = ("tag", "family_axes", "audit_grid", "check_grid", "check_grids")
+    drop = lambda d: {kk: v for kk, v in d.items() if kk not in changed}
+    assert drop(k) == drop(base) and "resample_every" not in k
+    assert k["tag"] == "e21lb_exact_dense"
+    assert k["family_axes"] == ((16, 17, 18, 19, 20), (8, 9, 10), (6, 7, 8))
+    fam_max = tuple(max(a) for a in k["family_axes"])
+    assert k["audit_grid"] == tuple(math.ceil(1.5 * v) for v in fam_max) == (30, 15, 12)
+    assert k["check_grid"] == k["check_grids"][0]
+    assert [tuple(g) for g in k["check_grids"]] == [
+        tuple(round(f * v) for v in k["audit_grid"]) for f in (4 / 3, 2, 8 / 3)]
+
+
+def test_e21c_audit_grid_is_certified_and_the_family_clears_the_minimum():
+    from eigen_benchmark.problems import p5_block as p5
+    k = run.e21c_settings()
+    r = p5.certify_audit_grid(tuple(max(a) for a in k["family_axes"]), geometry=run.E21_GEOMETRY)
+    assert r["meets_tol"] and r["chosen"] == k["audit_grid"]
+    lo = tuple(min(a) for a in k["family_axes"])
+    assert all(a >= b for a, b in zip(lo, (12, 6, 6)))      # E21의 최소 인증 격자 이상
+
+
+def test_e21c_run_reads_the_e21_tau_and_refuses_without_it(tmp_path, monkeypatch):
+    import json
+    with pytest.raises(FileNotFoundError):
+        run.e21c_run(outdir=str(tmp_path))
+    (tmp_path / "manifest_p5_tau_e21_lbracket.json").write_text(json.dumps({"tau": 10.0}))
+    got = {}
+    monkeypatch.setattr(run, "grid_v2", lambda **kw: got.update(kw) or {"verdicts": None})
+    run.e21c_run(outdir=str(tmp_path), device="cpu")
+    assert got["tau"] == 10.0 and got["tag"] == "e21lb_exact_dense"
+    assert got["audit_grid"] == (30, 15, 12)

@@ -92,7 +92,7 @@ own settings in the same module:
 | Structure | Geometry | Reference ladder | Audit grid | τ | Settings |
 |---|---|---|---|---|---|
 | near-degenerate section | b = 0.105, h = 0.10 | as the square section | (30, 14, 14) | 0.5 | `followup_settings("e18_*")` |
-| L-bracket | arm 1 [0, 1] × [0, 0.2], arm 2 [0.8, 1] × [0.2, 0.7], h = 0.1 | `run_p5.L_LADDER` | (24, 12, 12) | 10 | `e21_settings`, `e21b_settings` |
+| L-bracket | arm 1 [0, 1] × [0, 0.2], arm 2 [0.8, 1] × [0.2, 0.7], h = 0.1 | `run_p5.L_LADDER` | (24, 12, 12) | 10 | `e21_settings`, `e21b_settings`, `e21c_settings` |
 | two-layer block | E = 1 below and 0.1 above z = h/2, h = 0.10 | `run_p5.LADDER` | (30, 15, 6), points per layer | 20 | `e22_settings` |
 
 For the L-bracket a quadrature grid (n_L, n_W, n_T) counts points per unit length along each arm, across
@@ -114,7 +114,8 @@ Run tags: `v2` (main grid), `e2_*`–`e14*` (follow-up experiments), `e15r`/`e15
 convention under Monte Carlo quadrature), `e16sq_*` (square section), `e17_*` (training quadrature:
 placement × redraw period), `e18_*` (near-degenerate section), `e19_*` (torsion–axial inversion:
 budget and input normalization), `e20r_b4` (fourfold Monte Carlo sample), `e21lb_*` (L-bracket),
-`e21lb_exact_g1` (L-bracket, family redrawn at every iteration), `e22bi_*` (two-layer block).
+`e21lb_exact_g1` (L-bracket, family redrawn at every iteration), `e21lb_exact_dense` (L-bracket,
+denser family with audit grid (30, 15, 12)), `e22bi_*` (two-layer block).
 Trained network parameters (about 60 MB per run) are not included.
 
 Manifests written before the launch-provenance field existed record the repository head at write

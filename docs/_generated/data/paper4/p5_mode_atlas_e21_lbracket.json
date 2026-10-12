@@ -1,0 +1,114 @@
+{
+  "tag": "e21_lbracket",
+  "reference": "p5_reference_e21_lbracket",
+  "geometry": {
+    "L": 1.0,
+    "b": 0.2,
+    "h": 0.1,
+    "E": 1.0,
+    "rho": 1.0,
+    "nu": 0.29,
+    "kind": "L",
+    "a": 0.5
+  },
+  "faces": "x0",
+  "level": [
+    80,
+    16,
+    8
+  ],
+  "check_level": [
+    40,
+    8,
+    4
+  ],
+  "start_vector": "ones",
+  "render_blocks": [
+    {
+      "lo": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "hi": [
+        0.8,
+        0.2,
+        0.1
+      ],
+      "n": [
+        33,
+        9,
+        3
+      ]
+    },
+    {
+      "lo": [
+        0.8,
+        0.0,
+        0.0
+      ],
+      "hi": [
+        1.0,
+        0.2,
+        0.1
+      ],
+      "n": [
+        9,
+        9,
+        3
+      ]
+    },
+    {
+      "lo": [
+        0.8,
+        0.2,
+        0.0
+      ],
+      "hi": [
+        1.0,
+        0.7,
+        0.1
+      ],
+      "n": [
+        9,
+        21,
+        3
+      ]
+    }
+  ],
+  "modes": [
+    {
+      "mode": 1,
+      "lam_star": 0.003480855779690176,
+      "lam_fem": 0.0034816380364826507,
+      "dominant": "z",
+      "character": "bending",
+      "self_mac_levels": 0.9999999942244234
+    },
+    {
+      "mode": 2,
+      "lam_star": 0.012747170294629708,
+      "lam_fem": 0.012751134925399709,
+      "dominant": "y",
+      "character": "lateral",
+      "self_mac_levels": 0.9999999870081152
+    },
+    {
+      "mode": 3,
+      "lam_star": 0.028944920472762335,
+      "lam_fem": 0.028950284952329784,
+      "dominant": "z",
+      "character": "bending",
+      "self_mac_levels": 0.999999981067748
+    },
+    {
+      "mode": 4,
+      "lam_star": 0.14207061256064282,
+      "lam_fem": 0.1424369869415337,
+      "dominant": "x",
+      "character": "axial",
+      "self_mac_levels": 0.9999994851970051
+    }
+  ],
+  "sign": "each mode normalised so its largest-magnitude component is positive"
+}

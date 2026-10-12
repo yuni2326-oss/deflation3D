@@ -1,0 +1,89 @@
+{
+  "git_sha": "1b2376192b519a40e37c11ef011d415a81f2d51e",
+  "git_branch": "unknown",
+  "git_dirty": true,
+  "timestamp_utc": "2026-10-10T04:35:35.712828+00:00",
+  "python": "3.12.3",
+  "numpy": "2.1.0",
+  "scipy": "1.17.1",
+  "mpmath": "1.3.0",
+  "platform": "Linux 6.17.0-1026-nvidia aarch64",
+  "precision": "fp64 + mpmath dps=50",
+  "input_scaling": "raw",
+  "locking_signature_rule": "mass MAC >= 0.95 and energy MAC < 0.5",
+  "n_locking_signature": 0,
+  "driver": "run_p5_neural.oracle_fit",
+  "quick": false,
+  "prespecification": "2026-09-11-p5-followup-prespecification.md, E1",
+  "mode": 6,
+  "n_seeds": 20,
+  "iters": 20000,
+  "architecture": [
+    128,
+    5
+  ],
+  "audit_grid": [
+    18,
+    9,
+    7
+  ],
+  "geometry": {
+    "kind": "L",
+    "L": 1.0,
+    "b": 0.2,
+    "h": 0.1,
+    "a": 0.5,
+    "E": 1.0,
+    "rho": 1.0,
+    "nu": 0.29
+  },
+  "reference": "p5_reference_e21_lbracket",
+  "ref_level": [
+    80,
+    16,
+    8
+  ],
+  "fit_grid": [
+    18,
+    9,
+    7
+  ],
+  "check_grids": [
+    [
+      24,
+      12,
+      12
+    ],
+    [
+      64,
+      32,
+      32
+    ]
+  ],
+  "deflate": {
+    "npz": "/work/docs/_generated/data/paper4/p5_params_e21lb_exact_mc1.npz",
+    "cond": "mc",
+    "n": 5,
+    "grid": [
+      24,
+      12,
+      12
+    ],
+    "width": 128,
+    "depth": 5
+  },
+  "launch": {
+    "git_sha": "1b2376192b519a40e37c11ef011d415a81f2d51e",
+    "git_dirty": false,
+    "timestamp_utc": "2026-10-10T04:35:35.710271+00:00"
+  },
+  "loss": "(1 - mass MAC) + (1 - energy MAC) against the FEM reference mode",
+  "e_lam_median": 0.0025312925551902485,
+  "rule": 0.05,
+  "verdict": "e_optimization",
+  "one_sided": "a median at or above the rule is indeterminate, not evidence that the trial space cannot hold the mode: the FEM reference is C0 and a smooth trial function cannot match it exactly",
+  "reference_floor_e_lam": 0.0007550139882688758,
+  "Lam_fem_on_audit_grid": 1.2868851039195175,
+  "seconds": 10887.749924276024,
+  "added": "2026-09-10, E1"
+}

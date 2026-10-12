@@ -26,6 +26,8 @@ eigen_benchmark/
   drivers/run_p5.py         FEM references, cluster (degenerate-pair) detection, mode atlas
   drivers/run_p5_neural.py  experiment drivers: tau calibration, main grid, follow-ups
   drivers/p5_stats.py       every interval and test reported, recomputed from committed records
+  drivers/p5_exploit.py     post hoc re-evaluation of stored networks: where the training grid misses
+                            energy (by block and along the arms), stage shapes against FEM modes
   drivers/manifest.py       provenance (environment, git SHA at launch and at write time)
   render/figures_p5.py      figures, drawn from committed artifacts only (no FEM solve)
   quadrature.py, metrics.py shared numerics: Gauss-Legendre rules, MAC and classification
@@ -92,12 +94,17 @@ own settings in the same module:
 | Structure | Geometry | Reference ladder | Audit grid | τ | Settings |
 |---|---|---|---|---|---|
 | near-degenerate section | b = 0.105, h = 0.10 | as the square section | (30, 14, 14) | 0.5 | `followup_settings("e18_*")` |
-| L-bracket | arm 1 [0, 1] × [0, 0.2], arm 2 [0.8, 1] × [0.2, 0.7], h = 0.1 | `run_p5.L_LADDER` | (24, 12, 12) | 10 | `e21_settings`, `e21b_settings`, `e21c_settings` |
+| L-bracket | arm 1 [0, 1] × [0, 0.2], arm 2 [0.8, 1] × [0.2, 0.7], h = 0.1 | `run_p5.L_LADDER` | (24, 12, 12) | 10 | `e21_settings`, `e21b_settings`–`e21f_settings` |
 | two-layer block | E = 1 below and 0.1 above z = h/2, h = 0.10 | `run_p5.LADDER` | (30, 15, 6), points per layer | 20 | `e22_settings` |
 
 For the L-bracket a quadrature grid (n_L, n_W, n_T) counts points per unit length along each arm, across
 the width and through the thickness; for the two-layer block the third entry counts points per layer.
-Monte Carlo training quadrature and input normalization are refused off the homogeneous box.
+Uniform Monte Carlo training quadrature is available on the box and on the L-bracket (blocks drawn in
+proportion to their volume); input normalization is box-only, and the two-layer block refuses both.
+When the top ladder rung would not fit in node memory, the ladder is measured in point chunks
+(`ladder_chunk`); point-wise states are independent, so the ladder is the same.
+`oracle_fit` (the supervised-fit control) takes another structure's reference, held-out check grids
+and the stored modes of another run to project against (`e21f_settings`).
 
 ## Committed artifacts
 
@@ -115,8 +122,14 @@ convention under Monte Carlo quadrature), `e16sq_*` (square section), `e17_*` (t
 placement × redraw period), `e18_*` (near-degenerate section), `e19_*` (torsion–axial inversion:
 budget and input normalization), `e20r_b4` (fourfold Monte Carlo sample), `e21lb_*` (L-bracket),
 `e21lb_exact_g1` (L-bracket, family redrawn at every iteration), `e21lb_exact_dense` (L-bracket,
-denser family with audit grid (30, 15, 12)), `e22bi_*` (two-layer block).
-Trained network parameters (about 60 MB per run) are not included.
+denser family with audit grid (30, 15, 12)), `e21lb_exact_mc1` (L-bracket, uniform Monte Carlo points
+redrawn at every iteration), `e21lb_exact_hires` (L-bracket, high-resolution family with audit grid
+(48, 24, 20)), `e22bi_*` (two-layer block). Supervised fits of the L-bracket are in
+`p5_e1_oracle_fit_e21f_m{6,8}.csv`, the post hoc exploitation analyses in `p5_exploit_*.csv`, and the
+mode atlases of the L-bracket and the two-layer block in `p5_mode_{shapes,atlas}_<structure>.*`.
+Trained network parameters (about 60 MB per run) are not included. The post hoc analyses of
+`p5_exploit` and the projection step of the supervised fits re-read them, so their outputs are
+committed here but cannot be regenerated from this repository alone.
 
 Manifests written before the launch-provenance field existed record the repository head at write
 time rather than at launch. Inside the containers used here `git status` is refused (the repository

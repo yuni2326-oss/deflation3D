@@ -689,9 +689,39 @@ def test_neural_quadrature_on_the_l_bracket_is_the_numpy_composite_grid():
 
 
 def test_box_only_paths_refuse_the_l_bracket():
+    """입력 정규화는 상자 영역만 지원한다. 몬테카를로는 E21d부터 L-브래킷도 지원한다(아래)."""
     g = {"kind": "L", "L": 1.0, "b": 0.2, "h": 0.1, "a": 0.5, "E": 1.0, "rho": 1.0, "nu": 0.29}
     with pytest.raises(NotImplementedError):
-        p5n.mc_quadrature(100, np.random.default_rng(0), "cpu", g)
+        p5n.solve_p5_neural(n_modes=1, n_seeds=1, iters=1, width=4, depth=1, device="cpu",
+                            geometry=g, grid=(6, 3, 3), normalize_input=True)
+
+
+def test_mc_quadrature_on_the_l_bracket_is_uniform_over_its_volume():
+    """E21d — 블록을 부피에 비례해 고르고 그 안에서 균등하게 뽑으므로 L 전체에서 균등이고, 가중은 모두 V/n이다."""
+    g = {"kind": "L", "L": 1.0, "b": 0.2, "h": 0.1, "a": 0.5, "E": 1.0, "rho": 1.0, "nu": 0.29}
+    n = 6000
+    pts, w = p5n.mc_quadrature(n, np.random.default_rng(3), "cpu", g)
+    V = (0.8 * 0.2 + 0.2 * 0.2 + 0.2 * 0.5) * 0.1
+    assert pts.shape == (n, 3) and abs(float(w.sum()) - V) < 1e-15
+    assert float(w.max() - w.min()) == 0.0
+    P = pts.numpy()
+    inside = ((P[:, 0] >= 0) & (P[:, 0] <= 1) & (P[:, 1] >= 0) & (P[:, 2] >= 0) & (P[:, 2] <= 0.1)
+              & ((P[:, 1] <= 0.2) | ((P[:, 0] >= 0.8) & (P[:, 1] <= 0.7))))
+    assert bool(inside.all())
+    blk = np.where(P[:, 1] >= 0.2, 2, np.where(P[:, 0] >= 0.8, 1, 0))
+    for b, vb in enumerate((0.016, 0.004, 0.010)):
+        e = vb / V
+        assert abs(float(np.mean(blk == b)) - e) < 4 * np.sqrt(e * (1 - e) / n)
+    pts2, _ = p5n.mc_quadrature(n, np.random.default_rng(3), "cpu", g)
+    assert torch.equal(pts, pts2)
+
+
+def test_box_mc_draws_are_unchanged_by_the_l_extension():
+    """커밋된 상자 MC 실행(E15·E17·E20)의 표본은 그대로여야 한다."""
+    g = p5.P5_GEOMETRY
+    pts, _ = p5n.mc_quadrature(10, np.random.default_rng(5), "cpu", g)
+    ref = np.random.default_rng(5).uniform(size=(10, 3)) * np.array([g["L"], g["b"], g["h"]])
+    assert np.array_equal(pts.numpy(), ref)
 
 
 # ── E22 두 층 이종재료 ─────────────────────────────────────────────────────────
@@ -745,3 +775,36 @@ def test_solve_reports_the_audit_quotient_with_the_layer_moduli():
 def test_monte_carlo_refuses_the_bilayer():
     with pytest.raises(NotImplementedError):
         p5n.mc_quadrature(100, np.random.default_rng(0), "cpu", BI)
+
+
+# ── E21e (2026-10-09): 사다리를 점 묶음으로 ───────────────────────────────────
+
+def test_ladder_can_be_measured_in_point_chunks_without_moving_the_values():
+    """E21e의 사다리 최상단은 78만 점이라 한 번에 재면 GB10 메모리를 넘는다. 점마다의 상태는
+    점끼리 독립이므로 묶음으로 나눠 잰 뒤 이어 붙여도 같은 사다리다. L-브래킷에서 잰다."""
+    g = {"kind": "L", "L": 1.0, "b": 0.2, "h": 0.1, "a": 0.5, "E": 1.0, "rho": 1.0, "nu": 0.29}
+    kw = dict(n_modes=2, n_seeds=2, iters=10, width=16, depth=2, device="cpu", geometry=g,
+              audit_grid=(6, 3, 3), check_grids=[(8, 4, 4), (10, 5, 5)])
+    whole = p5n.solve_p5_neural(**kw)
+    parts = p5n.solve_p5_neural(**kw, ladder_chunk=37)
+    np.testing.assert_allclose(parts["lam_ladder"], whole["lam_ladder"], rtol=1e-12, atol=0)
+    assert np.array_equal(parts["lam"], whole["lam"])
+
+
+def test_ladder_chunking_is_off_by_default_so_committed_runs_are_unchanged():
+    import inspect
+    assert inspect.signature(p5n.solve_p5_neural).parameters["ladder_chunk"].default is None
+
+
+
+def test_chunked_ladder_releases_the_allocator_cache_before_and_between_rungs(monkeypatch):
+    """E21e 보완 — 90시간 학습의 할당자 캐시를 든 채 사다리에 들어가지 않도록, 묶음 평가를 켤 때만 사다리 직전과
+    칸마다 캐시를 비운다. 기본 경로는 부르지 않는다."""
+    calls = []
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: calls.append(1))
+    kw = dict(n_modes=1, n_seeds=2, iters=4, width=8, depth=1, device="cpu", audit_grid=(10, 6, 5),
+              check_grids=[(12, 7, 6), (14, 8, 7)])
+    p5n.solve_p5_neural(**kw)
+    assert calls == []
+    p5n.solve_p5_neural(**kw, ladder_chunk=50)
+    assert len(calls) == 3                      # 사다리 직전 1 + 칸마다 1

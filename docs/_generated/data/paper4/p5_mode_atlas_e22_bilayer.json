@@ -1,0 +1,80 @@
+{
+  "tag": "e22_bilayer",
+  "reference": "p5_reference_e22_bilayer",
+  "geometry": {
+    "L": 1.0,
+    "b": 0.2,
+    "h": 0.1,
+    "E": 1.0,
+    "rho": 1.0,
+    "nu": 0.29,
+    "kind": "bilayer",
+    "E_top": 0.1
+  },
+  "faces": "x0",
+  "level": [
+    48,
+    16,
+    8
+  ],
+  "check_level": [
+    24,
+    8,
+    4
+  ],
+  "start_vector": "ones",
+  "render_blocks": [
+    {
+      "lo": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "hi": [
+        1.0,
+        0.2,
+        0.1
+      ],
+      "n": [
+        49,
+        9,
+        3
+      ]
+    }
+  ],
+  "modes": [
+    {
+      "mode": 1,
+      "lam_star": 0.0028285095327162412,
+      "lam_fem": 0.0028302060375018515,
+      "dominant": "z",
+      "character": "bending",
+      "self_mac_levels": 0.9999999481669553
+    },
+    {
+      "mode": 2,
+      "lam_star": 0.02122484461810277,
+      "lam_fem": 0.02123763223039538,
+      "dominant": "y",
+      "character": "lateral",
+      "self_mac_levels": 0.9999999407582703
+    },
+    {
+      "mode": 3,
+      "lam_star": 0.10255345743057927,
+      "lam_fem": 0.10259605849462396,
+      "dominant": "z",
+      "character": "bending",
+      "self_mac_levels": 0.9999994988906602
+    },
+    {
+      "mode": 4,
+      "lam_star": 0.16462966704736784,
+      "lam_fem": 0.1646675808903587,
+      "dominant": "z",
+      "character": "torsion",
+      "self_mac_levels": 0.9999998166071715
+    }
+  ],
+  "sign": "each mode normalised so its largest-magnitude component is positive"
+}

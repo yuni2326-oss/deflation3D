@@ -1202,3 +1202,143 @@ def test_e21c_run_reads_the_e21_tau_and_refuses_without_it(tmp_path, monkeypatch
     run.e21c_run(outdir=str(tmp_path), device="cpu")
     assert got["tau"] == 10.0 and got["tag"] == "e21lb_exact_dense"
     assert got["audit_grid"] == (30, 15, 12)
+
+
+def test_e21e_is_the_e21_exact_arm_with_the_box_high_resolution_family():
+    """사전규정 2026-10-09 E21e — E21 정확 arm과 격자족(과 그에 맞춘 감사·사다리)만 다르고, 격자족은
+    기준 구조의 고해상 격자족(E3)과 같은 점수다."""
+    import math
+    k, base = run.e21e_settings(), run.e21_settings("exact")
+    changed = ("tag", "family_axes", "audit_grid", "check_grid", "check_grids", "ladder_chunk")
+    drop = lambda d: {kk: v for kk, v in d.items() if kk not in changed}
+    assert drop(k) == drop(base) and "resample_every" not in k
+    assert k["tag"] == "e21lb_exact_hires"
+    # 사다리 최상단 (128, 64, 53)은 78만 점 — 한 번에 재면 약 180 GB라 묶어 잰다. 10만 점 묶음의 실측 시스템
+    # 사용 최대가 105.7/119 GiB여서 5만 점으로 줄였다(사전규정 보완 2026-10-09).
+    assert k["ladder_chunk"] == 50_000 and "ladder_chunk" not in base
+    assert k["family_axes"] == run.E3_FAMILY_AXES
+    fam_max = tuple(max(a) for a in k["family_axes"])
+    assert k["audit_grid"] == tuple(math.ceil(1.5 * v) for v in fam_max) == (48, 24, 20)
+    assert k["check_grid"] == k["check_grids"][0]
+    assert [tuple(g) for g in k["check_grids"]] == [
+        tuple(round(f * v) for v in k["audit_grid"]) for f in (4 / 3, 2, 8 / 3)]
+
+
+def test_e21e_audit_grid_is_certified():
+    from eigen_benchmark.problems import p5_block as p5
+    k = run.e21e_settings()
+    r = p5.certify_audit_grid(tuple(max(a) for a in k["family_axes"]), geometry=run.E21_GEOMETRY)
+    assert r["meets_tol"] and r["chosen"] == k["audit_grid"]
+
+
+def test_e21e_run_reads_the_e21_tau_and_refuses_without_it(tmp_path, monkeypatch):
+    import json
+    with pytest.raises(FileNotFoundError):
+        run.e21e_run(outdir=str(tmp_path))
+    (tmp_path / "manifest_p5_tau_e21_lbracket.json").write_text(json.dumps({"tau": 10.0}))
+    got = {}
+    monkeypatch.setattr(run, "grid_v2", lambda **kw: got.update(kw) or {"verdicts": None})
+    run.e21e_run(outdir=str(tmp_path), device="cpu")
+    assert got["tau"] == 10.0 and got["tag"] == "e21lb_exact_hires"
+    assert got["audit_grid"] == (48, 24, 20)
+
+
+
+@pytest.mark.skipif(__import__("importlib").util.find_spec("torch") is None,
+                    reason="torch 없음")
+def test_grid_v2_forwards_ladder_chunking_and_leaves_it_off_by_default(tmp_path, monkeypatch):
+    import shutil
+    from eigen_benchmark.neural import p5_neural as p5n
+    seen = []
+    real = p5n.solve_p5_neural
+
+    def spy(*a, **kw):
+        seen.append(kw.get("ladder_chunk", "absent"))
+        return real(*a, **kw)
+    monkeypatch.setattr(p5n, "solve_p5_neural", spy)
+    d = str(tmp_path)
+    shutil.copy("docs/_generated/data/paper4/p5_reference.csv", d)
+    run.grid_v2(outdir=d, quick=True, arms=("exact",), control=False, device="cpu",
+                tau=5.0, tag="c50", ladder_chunk=50, check_grids=[(12, 7, 6), (14, 8, 7)])
+    run.grid_v2(outdir=d, quick=True, arms=("exact",), control=False, device="cpu",
+                tau=5.0, tag="c0")
+    assert seen == [50, None]
+
+
+
+def test_e21d_is_the_e21b_condition_with_uniform_monte_carlo_points():
+    """사전규정 2026-10-09 E21d — E21b(정확 arm, 매 반복)와 훈련 점 배치만 다르다: 가우스 격자족 대신 같은 평균
+    점수의 균등 몬테카를로 점을 매 반복 새로 뽑는다(상자의 e15b와 같은 조작)."""
+    import numpy as np
+    from eigen_benchmark.neural import p5_neural as p5n
+    k, base = run.e21d_settings(), run.e21_settings("exact")
+    changed = ("tag", "mc_points", "mc_resample_every")
+    drop = lambda d: {kk: v for kk, v in d.items() if kk not in changed}
+    assert drop(k) == drop(base) and "resample_every" not in k
+    assert k["tag"] == "e21lb_exact_mc1" and k["mc_resample_every"] == 1
+    fam = p5n.quadrature_family("cpu", run.E21_GEOMETRY, run.E21_FAMILY_AXES)
+    assert k["mc_points"] == int(round(np.mean([len(w) for _, w in fam])))
+
+
+def test_e21d_run_reads_the_e21_tau_and_refuses_without_it(tmp_path, monkeypatch):
+    import json
+    with pytest.raises(FileNotFoundError):
+        run.e21d_run(outdir=str(tmp_path))
+    (tmp_path / "manifest_p5_tau_e21_lbracket.json").write_text(json.dumps({"tau": 10.0}))
+    got = {}
+    monkeypatch.setattr(run, "grid_v2", lambda **kw: got.update(kw) or {"verdicts": None})
+    run.e21d_run(outdir=str(tmp_path), device="cpu")
+    assert got["tau"] == 10.0 and got["tag"] == "e21lb_exact_mc1" and got["mc_resample_every"] == 1
+
+
+# ── E21f 지도 적합 — L-브래킷 모드 6을 시행공간이 담는가 (사전규정 2026-10-10-p5-e21f-prespecification.md) ──
+
+def test_oracle_fit_defaults_keep_the_committed_box_call():
+    import inspect
+    p = inspect.signature(run.oracle_fit).parameters
+    assert p["geometry"].default is None and p["ref_name"].default == "p5_reference"
+    assert p["ref_level"].default is None and p["fit_grid"].default is None
+    assert p["check_grids"].default is None and p["deflate"].default is None
+    q = inspect.signature(run.reference_state).parameters
+    assert q["geometry"].default is None and q["level"].default is None and q["faces"].default == "x0"
+
+
+def test_oracle_fit_on_the_l_bracket_measures_held_out_and_deflated_quotients(tmp_path):
+    """맞춘 격자 밖의 격자에서, 그리고 다른 실행의 저장 모드로 정확 사영한 뒤의 Rayleigh 몫을 잰다."""
+    import csv
+    import json
+    import shutil
+    import numpy as np
+    from eigen_benchmark.neural import p5_neural as p5n
+    d = str(tmp_path)
+    shutil.copy("docs/_generated/data/paper4/p5_reference_e21_lbracket.csv", d)
+    g = dict(run.E21_GEOMETRY)
+    out = p5n.solve_p5_neural(n_modes=2, n_seeds=2, iters=4, width=16, depth=2, device="cpu",
+                              geometry=g, audit_grid=(6, 3, 3), resample_every=2,
+                              family_axes=((4,), (2,), (2,)), return_params=True)
+    npz = tmp_path / "p5_params_x.npz"
+    np.savez_compressed(npz, **{f"exact_resampled_m{m + 1}_{k}": v
+                                for m, pm in enumerate(out["params"]) for k, v in pm.items()})
+    run.oracle_fit(outdir=d, quick=True, device="cpu", tag="lt", mode=3, geometry=g,
+                   ref_name="p5_reference_e21_lbracket", ref_level=(20, 4, 2), fit_grid=(6, 3, 3),
+                   check_grids=[(8, 4, 4)],
+                   deflate={"npz": str(npz), "cond": "resampled", "n": 2, "grid": (8, 4, 4),
+                            "width": 16, "depth": 2})
+    rows = list(csv.DictReader(open(f"{d}/p5_e1_oracle_fit_lt.csv", encoding="utf-8")))
+    assert len(rows) == 2 and {"Lam_check_0", "e_lam_check_0", "Lam_deflated"} <= set(rows[0])
+    m = json.load(open(f"{d}/manifest_p5_e1_lt.json", encoding="utf-8"))
+    assert m["geometry"]["kind"] == "L" and m["fit_grid"] == [6, 3, 3] and m["check_grids"] == [[8, 4, 4]]
+
+
+def test_e21f_fits_modes_six_and_eight_with_held_out_and_deflated_measures():
+    assert run.E21F_MODES == (6, 8)
+    for mode in run.E21F_MODES:
+        k = run.e21f_settings(mode)
+        assert k["mode"] == mode and k["tag"] == f"e21f_m{mode}"
+        assert k["geometry"] == run.E21_GEOMETRY and k["ref_name"] == run.E21_REF
+        assert k["ref_level"] == run.E21_REF_LEVEL and k["fit_grid"] == (18, 9, 7)
+        assert k["check_grids"] == [run.E21_AUDIT_GRID, run.E21_LADDER[-1]]
+        dfl = k["deflate"]
+        assert dfl["npz"].endswith("p5_params_e21lb_exact_mc1.npz") and dfl["cond"] == "mc"
+        assert dfl["n"] == 5 and dfl["grid"] == run.E21_AUDIT_GRID
+        assert (dfl["width"], dfl["depth"]) == (128, 5)

@@ -14,6 +14,9 @@
 사다리 최상단에서 풀어 쓴 산출물을 읽는다. 색은 변위 크기가 아니라 **지배 성분 부류**다 —
 형상은 기하가 이미 보이고, 원고의 논지(성분 공유)는 부류가 싣기 때문이다. 부류 색은 arm
 슬롯과 겹치지 않도록 슬롯 7(보라)·6(초록)을 쓰며 전 쌍 검증을 통과했다(ΔE 27.9 deutan).
+그림 1 확장(2026-10-09)은 L-브래킷의 x-지배 모드에 빨강(#e34948)을 더한다. 세 색 전 쌍 검증은 정상시
+최악 ΔE 33.1로 통과하지만 빨강↔초록의 protan ΔE가 7.2로 6–8 하한대라, 칸마다 성격 라벨(예: "axial (x)")을
+글자로 직접 다는 것이 보조 부호다.
 """
 from __future__ import annotations
 
@@ -224,7 +227,21 @@ def fig_ladder(data_dir: str = DATA_DIR, outdir: str = FIG_DIR) -> str:
 ATLAS = (("baseline", "Baseline", "clamped–free", "h/L = 0.04", "p5_neural_v2.csv", "e14base"),
          ("e13a_thick", "E13-a", "clamped–free", "h/L = 0.10", "p5_neural_e13a_thick.csv", "e14a"),
          ("e13b_clamped2", "E13-b", "clamped–clamped", "h/L = 0.04",
-          "p5_neural_e13b_clamped2.csv", "e14b"))
+          "p5_neural_e13b_clamped2.csv", "e14b"),
+         ("e21_lbracket", "L-bracket", "clamped–free", "re-entrant corner",
+          "p5_neural_e21lb_diag.csv", "e21lb_diag"),
+         ("e22_bilayer", "Two layers", "clamped–free", r"$E_\mathrm{top}/E$ = 0.1",
+          "p5_neural_e22bi_diag.csv", "e22bi_diag"))
+# 상자 밖 두 구조(그림 1 확장, 2026-10-09)는 구조마다 따로 쓴 도감을 읽는다(`run_p5.extra_atlas`).
+# 기존 세 행의 산출물(`p5_mode_shapes.csv`·`p5_mode_character.json`)은 그대로다.
+ATLAS_EXTRA = ("e21_lbracket", "e22_bilayer")
+ATLAS_ROW_LIMITS = {"e21_lbracket": ((-0.04, 1.04), (-0.12, 0.82), (-0.12, 0.22))}
+ATLAS_ROW_HEIGHT = {"e21_lbracket": 1.25}       # 행 높이(기존 행 = 1). 팔2가 y로 0.7까지 뻗는다
+ATLAS_ROW_ZOOM = {"e21_lbracket": 1.05}         # 기존 행은 1.42 — L은 칸을 넘치지 않게 줄인다
+ATLAS_ROW_VIEW = {"e21_lbracket": (40, -60)}    # (고도각, 방위각) — 위에서 보아 L 모양과 면내 모드가 보이게
+ATLAS_ROW_IN = 1.372                             # 기존 행 높이(인치) — 세 행 판의 4.45 in에서
+# L-브래킷 블록(팔1·모서리·팔2)끼리 맞닿은 면은 안쪽 면이라 그리지 않는다.
+L_INNER_FACES = ({"x1"}, {"x0", "y1"}, {"y0"})
 ATLAS_AMP = 0.08                 # 최대 변위를 길이의 8 %로(모드는 임의 정규화)
 ATLAS_VIEW = (24, -60)           # (고도각, 방위각), 정사영
 ATLAS_LIMITS = ((-0.04, 1.04), (-0.12, 0.32), (-0.12, 0.22))
@@ -260,19 +277,24 @@ def _span_medians(data_dir, tag):
             for k in (2, 3)}
 
 
-def _block_faces(P):
-    """구조점 (nx, ny, nz, 3)의 경계면을 사각형 목록으로."""
+def _block_faces(P, skip=frozenset()):
+    """구조점 (nx, ny, nz, 3)의 경계면을 사각형 목록으로. `skip`의 면("x0", "x1", "y0", "y1")은
+    뺀다 — 다중 블록에서 블록끼리 맞닿은 안쪽 면이다. 기본값이면 기존 순서 그대로다."""
     nx, ny, nz, _ = P.shape
     F = []
     for k in (0, nz - 1):
         for i in range(nx - 1):
             for j in range(ny - 1):
                 F.append([P[i, j, k], P[i + 1, j, k], P[i + 1, j + 1, k], P[i, j + 1, k]])
-    for j in (0, ny - 1):
+    for j, name in ((0, "y0"), (ny - 1, "y1")):
+        if name in skip:
+            continue
         for i in range(nx - 1):
             for k in range(nz - 1):
                 F.append([P[i, j, k], P[i + 1, j, k], P[i + 1, j, k + 1], P[i, j, k + 1]])
-    for i in (0, nx - 1):
+    for i, name in ((0, "x0"), (nx - 1, "x1")):
+        if name in skip:
+            continue
         for j in range(ny - 1):
             for k in range(nz - 1):
                 F.append([P[i, j, k], P[i, j + 1, k], P[i, j + 1, k + 1], P[i, j, k + 1]])
@@ -294,6 +316,53 @@ def _box_edges(L, b, h):
             if np.count_nonzero(np.abs(c[a] - c[q]) > 0) == 1]
 
 
+def _outline_edges(g):
+    """변형 전 윤곽. 상자는 열두 모서리, L-브래킷은 L자 둘레, 두 층 구조는 상자에 계면 사각형을 더한다."""
+    if g.get("kind") == "L":
+        L, b, h, a = (float(g[k]) for k in ("L", "b", "h", "a"))
+        ring = [(0.0, 0.0), (L, 0.0), (L, b + a), (L - b, b + a), (L - b, b), (0.0, b)]
+        E = [((p[0], p[1], z), (q[0], q[1], z)) for z in (0.0, h)
+             for p, q in zip(ring, ring[1:] + ring[:1])]
+        E += [((x, y, 0.0), (x, y, h)) for x, y in ring]
+        return [(np.array(p_), np.array(q_)) for p_, q_ in E]
+    E = _box_edges(g["L"], g["b"], g["h"])
+    if g.get("kind") == "bilayer":
+        z = 0.5 * float(g["h"])
+        c = [(0.0, 0.0), (g["L"], 0.0), (g["L"], g["b"]), (0.0, g["b"])]
+        E += [(np.array([p[0], p[1], z]), np.array([q[0], q[1], z]))
+              for p, q in zip(c, c[1:] + c[:1])]
+    return E
+
+
+def _atlas_rows(data_dir):
+    """행마다 (구조 기록, [(블록 격자 크기, 안쪽 면, {모드: (n, 6) 배열})]). 기존 세 구조는 공용 도감,
+    상자 밖 두 구조는 구조별 도감에서 읽는다."""
+    with open(os.path.join(data_dir, "p5_mode_character.json"), encoding="utf-8") as f:
+        atlas = json.load(f)
+    grid = tuple(atlas["render_grid"])
+    shared = {}
+    for r in _read_csv(data_dir, "p5_mode_shapes.csv"):
+        shared.setdefault((r["structure"], int(r["mode"])), []).append(
+            [float(r[k]) for k in ("x", "y", "z", "ux", "uy", "uz")])
+    rows = {}
+    for tag, *_ in ATLAS:
+        if tag not in ATLAS_EXTRA:
+            rows[tag] = (atlas["structures"][tag],
+                         [(grid, frozenset(), {m: np.array(shared[(tag, m)]) for m in range(1, 5)})])
+            continue
+        with open(os.path.join(data_dir, f"p5_mode_atlas_{tag}.json"), encoding="utf-8") as f:
+            s = json.load(f)
+        per = {}
+        for r in _read_csv(data_dir, f"p5_mode_shapes_{tag}.csv"):
+            per.setdefault((int(r["block"]), int(r["mode"])), []).append(
+                [float(r[k]) for k in ("x", "y", "z", "ux", "uy", "uz")])
+        inner = L_INNER_FACES if s["geometry"].get("kind") == "L" else (frozenset(),)
+        rows[tag] = (s, [(tuple(bk["n"]), frozenset(inner[i]),
+                          {m: np.array(per[(i, m)]) for m in range(1, 5)})
+                         for i, bk in enumerate(s["render_blocks"])])
+    return rows
+
+
 def _sci(v):
     e = int(np.floor(np.log10(abs(v))))
     return f"{v:.3f}" if e == 0 else f"{v / 10 ** e:.3f}×10$^{{{e}}}$"
@@ -301,45 +370,61 @@ def _sci(v):
 
 
 def fig_modes3d(data_dir: str = DATA_DIR, outdir: str = FIG_DIR) -> str:
-    """세 구조 × 모드 1–4의 참조 모드형상. 테두리는 성분 공유 규칙이 벽을 예측한 모드."""
-    with open(os.path.join(data_dir, "p5_mode_character.json"), encoding="utf-8") as f:
-        atlas = json.load(f)
-    grid = tuple(atlas["render_grid"])
-    shapes = {}
-    for r in _read_csv(data_dir, "p5_mode_shapes.csv"):
-        shapes.setdefault((r["structure"], int(r["mode"])), []).append(
-            [float(r[k]) for k in ("x", "y", "z", "ux", "uy", "uz")])
+    """다섯 구조 × 모드 1–4의 참조 모드형상. 테두리는 성분 공유 규칙이 벽을 예측한 모드."""
+    rows_data = _atlas_rows(data_dir)
     cls_color = {"z": C_ZDOM, "y": C_YDOM, "x": C_XDOM}
-
-    fig = plt.figure(figsize=(7.48, 4.45))
-    nrow, ncol = len(ATLAS), 4
-    left, right, top, bottom = 0.118, 0.998, 0.93, 0.005
-    cw, rh = (right - left) / ncol, (top - bottom) / nrow
-    for ri, (tag, name, bc, hl, csv_name, span_tag) in enumerate(ATLAS):
-        s = atlas["structures"][tag]
+    weights = [ATLAS_ROW_HEIGHT.get(t, 1.0) for t, *_ in ATLAS]
+    top_in, bottom_in = 0.31, 0.02
+    H = ATLAS_ROW_IN * sum(weights) + top_in + bottom_in
+    fy = lambda inch: inch / H
+    fig = plt.figure(figsize=(7.48, H))
+    ncol = 4
+    left, right = 0.118, 0.998
+    cw = (right - left) / ncol
+    top = 1.0 - fy(top_in)
+    y_cursor = top
+    used = set()
+    for (tag, name, bc, hl, csv_name, span_tag), wgt in zip(ATLAS, weights):
+        s, blocks = rows_data[tag]
         g, faces, modes = s["geometry"], s["faces"], s["modes"]
         dc = _diag_counts(data_dir, csv_name)
         sm = _span_medians(data_dir, span_tag)
-        wall = predicted_wall([m["dominant"] for m in modes])
-        y0 = top - (ri + 1) * rh
+        wall = predicted_wall([m["dominant"] for m in modes[:4]])
+        rh = fy(ATLAS_ROW_IN * wgt)
+        y0 = y_cursor - rh
+        y_cursor = y0
         fig.text(0.006, y0 + rh * 0.60, name, fontsize=8.6, weight="bold", color=INK,
                  va="center")
-        fig.text(0.006, y0 + rh * 0.60 - 0.035, f"{bc}\n{hl}", fontsize=6.8,
+        fig.text(0.006, y0 + rh * 0.60 - fy(0.156), f"{bc}\n{hl}", fontsize=6.8,
                  color=INK_MUTED, va="top", linespacing=1.3)
+        (x0, x1), (y0l, y1l), (z0, z1) = ATLAS_ROW_LIMITS.get(tag, ATLAS_LIMITS)
         for ci in range(ncol):
             m = ci + 1
             mi = modes[ci]
-            A = np.array(shapes[(tag, m)])
-            X = A[:, :3].reshape(*grid, 3)
-            U = A[:, 3:].reshape(*grid, 3)
-            F = _block_faces(X + U / np.abs(U).max() * ATLAS_AMP)
+            used.add(mi["dominant"])
             ax = fig.add_axes([left + ci * cw - 0.03, y0 + rh * 0.10, cw + 0.06, rh * 0.72],
                               projection="3d")
             ax.patch.set_alpha(0.0)
+            F = []
+            amp = max(float(np.abs(sh[m][:, 3:]).max()) for _, _, sh in blocks)
+            for n, inner, sh in blocks:
+                A = sh[m]
+                X = A[:, :3].reshape(*n, 3)
+                U = A[:, 3:].reshape(*n, 3)
+                F.append(_block_faces(X + U / amp * ATLAS_AMP, inner))
+            F = np.concatenate(F)
             ax.add_collection3d(Poly3DCollection(
                 F, facecolors=_shaded(F, cls_color[mi["dominant"]]), edgecolors="none",
                 linewidths=0))
-            for p_, q_ in _box_edges(g["L"], g["b"], g["h"]):
+            if g.get("kind") == "bilayer":
+                # 재료 계면(두께 중앙)을 보이는 두 옆면(y = 0, x = L)에 변형된 위치로 긋는다. 면 색 위에서
+                # 보이도록 흰 선이고, mplot3d가 깊이로 다시 매기는 면 순서보다 위에 오도록 zorder를 준다.
+                for n, _inner, sh in blocks:
+                    A = sh[m]
+                    Dm = (A[:, :3] + A[:, 3:] / amp * ATLAS_AMP).reshape(*n, 3)
+                    for line in (Dm[:, 0, n[2] // 2], Dm[-1, :, n[2] // 2]):
+                        ax.plot(*line.T, color="#ffffff", lw=0.7, zorder=20)
+            for p_, q_ in _outline_edges(g):
                 ax.plot(*zip(p_, q_), color=OUTLINE, lw=0.4, ls=(0, (2, 2)))
             for xf in ([0.0] if faces == "x0" else [0.0, g["L"]]):
                 pad = 0.03
@@ -347,37 +432,39 @@ def fig_modes3d(data_dir: str = DATA_DIR, outdir: str = FIG_DIR) -> str:
                     [np.array([[xf, -pad, -pad], [xf, g["b"] + pad, -pad],
                                [xf, g["b"] + pad, g["h"] + pad], [xf, -pad, g["h"] + pad]])],
                     facecolors=CLAMP, edgecolors=CLAMP_EDGE, linewidths=0.4, alpha=0.9))
-            (x0, x1), (y0l, y1l), (z0, z1) = ATLAS_LIMITS
             ax.set_xlim(x0, x1); ax.set_ylim(y0l, y1l); ax.set_zlim(z0, z1)
-            ax.set_box_aspect((x1 - x0, y1l - y0l, z1 - z0), zoom=1.42)
+            ax.set_box_aspect((x1 - x0, y1l - y0l, z1 - z0), zoom=ATLAS_ROW_ZOOM.get(tag, 1.42))
             ax.set_proj_type("ortho")
-            ax.view_init(elev=ATLAS_VIEW[0], azim=ATLAS_VIEW[1])
+            view = ATLAS_ROW_VIEW.get(tag, ATLAS_VIEW)
+            ax.view_init(elev=view[0], azim=view[1])
             ax.set_axis_off()
 
             x_text = left + ci * cw + 0.008
             onset = m == wall
-            fig.text(x_text, y0 + rh * 0.93, f"Mode {m}", fontsize=7.4, color=INK,
+            fig.text(x_text, y0 + rh - fy(0.096), f"Mode {m}", fontsize=7.4, color=INK,
                      weight="bold", va="top")
-            fig.text(x_text, y0 + rh * 0.815, f"{mi['character']} ({mi['dominant']})",
+            fig.text(x_text, y0 + rh - fy(0.254), f"{mi['character']} ({mi['dominant']})",
                      fontsize=6.6, color=INK_MUTED, va="top")
-            fig.text(left + (ci + 1) * cw - 0.008, y0 + rh * 0.93, f"diag. {dc[m]}/20",
+            fig.text(left + (ci + 1) * cw - 0.008, y0 + rh - fy(0.096), f"diag. {dc[m]}/20",
                      fontsize=7.0, ha="right", va="top", color=INK,
                      weight="bold" if onset else "normal")
             lines = [f"Λ* = {_sci(mi['lam_star'])}"]
             if m >= 3:
                 lines.append(f"stored 1–{m - 1}: max|C| = {sm[m - 1]:.3g}")
-            fig.text(x_text, y0 + rh * 0.03, "\n".join(lines), fontsize=6.4,
+            fig.text(x_text, y0 + fy(0.041), "\n".join(lines), fontsize=6.4,
                      color=INK_MUTED, va="bottom", linespacing=1.3)
             if onset:
                 fig.patches.append(FancyBboxPatch(
-                    (left + ci * cw + 0.002, y0 + 0.006), cw - 0.004, rh - 0.012,
+                    (left + ci * cw + 0.002, y0 + fy(0.027)), cw - 0.004, rh - fy(0.053),
                     boxstyle="round,pad=0,rounding_size=0.008", transform=fig.transFigure,
                     fill=False, lw=0.9, ec=INK, zorder=10))
-    fig.legend(handles=[Patch(color=C_ZDOM, label="z-dominant (bending, torsion)"),
-                        Patch(color=C_YDOM, label="y-dominant (lateral)"),
-                        Patch(facecolor=CLAMP, edgecolor=CLAMP_EDGE, label="clamped face")],
-               loc="upper left", bbox_to_anchor=(0.112, 1.0), ncol=3, fontsize=7.0,
-               frameon=False, handlelength=1.2, columnspacing=1.6)
+    handles = [Patch(color=C_ZDOM, label="z-dominant (bending, torsion)"),
+               Patch(color=C_YDOM, label="y-dominant (lateral)")]
+    if "x" in used:
+        handles.append(Patch(color=C_XDOM, label="x-dominant (axial)"))
+    handles.append(Patch(facecolor=CLAMP, edgecolor=CLAMP_EDGE, label="clamped face"))
+    fig.legend(handles=handles, loc="upper left", bbox_to_anchor=(0.112, 1.0), ncol=len(handles),
+               fontsize=7.0, frameon=False, handlelength=1.2, columnspacing=1.6)
     return _save(fig, outdir, "p5_fig_modes3d.png")
 
 

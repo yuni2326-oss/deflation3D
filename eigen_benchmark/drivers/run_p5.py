@@ -305,6 +305,79 @@ def mode_atlas(outdir=None) -> dict:
     return structures
 
 
+
+# ── 그림 1 확장(2026-10-09): 상자 밖 두 구조의 참조 모드형상 ─────────────────────
+# 기존 세 구조의 도감(`mode_atlas`)과 그 산출물은 그대로 둔다. L-브래킷과 두 층 구조는 성격·지배 성분·Λ*를
+# 커밋된 구조 참조(`structure_reference`)에서 읽는다 — 원고 4.7절이 인용한 값과 같은 출처다. 형상만 참조
+# 사다리의 최상단과 그 아래 단에서 다시 풀어(고정 시작벡터) 렌더 점에 쓰고, 두 단의 형상 일치를 남긴다.
+EXTRA_ATLAS = {"e21_lbracket": "p5_reference_e21_lbracket",
+               "e22_bilayer": "p5_reference_e22_bilayer"}
+RENDER_STEP = 0.025       # L-브래킷 평면 안 렌더 점 간격 — 기존 도감의 폭 방향 간격(0.2/8)과 같다
+
+
+def render_blocks(g) -> list:
+    """렌더용 구조점 블록 [(lo, hi, (nx, ny, nz))]. L-브래킷은 상자 셋(팔1·모서리·팔2), 그 밖은 기존
+    도감과 같은 격자의 상자 하나다."""
+    if g.get("kind") != "L":
+        return [((0.0, 0.0, 0.0), (float(g["L"]), float(g["b"]), float(g["h"])), tuple(ATLAS_GRID))]
+    L, b, h, a = (float(g[k]) for k in ("L", "b", "h", "a"))
+    n = lambda length: int(round(length / RENDER_STEP)) + 1
+    nz = ATLAS_GRID[2]
+    return [((0.0, 0.0, 0.0), (L - b, b, h), (n(L - b), n(b), nz)),
+            ((L - b, 0.0, 0.0), (L, b, h), (n(b), n(b), nz)),
+            ((L - b, b, 0.0), (L, b + a, h), (n(b), n(a), nz))]
+
+
+def _block_points(lo, hi, n):
+    axes = [np.linspace(lo[k], hi[k], n[k]) for k in range(3)]
+    X, Y, Z = np.meshgrid(*axes, indexing="ij")
+    return np.column_stack([X.ravel(), Y.ravel(), Z.ravel()])
+
+
+def extra_atlas(tag: str, outdir=None, levels=None) -> dict:
+    """구조 하나의 도감 — `p5_mode_shapes_<tag>.csv`(블록 열 포함)와 `p5_mode_atlas_<tag>.json`.
+
+    `levels`=(위 단, 아래 단)은 시험용이다. 기본값은 커밋된 참조 사다리의 위 두 단이다."""
+    import json
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    ref_name = EXTRA_ATLAS[tag]
+    with open(os.path.join(manifest.P5_OUTDIR, f"{ref_name}.json"), encoding="utf-8") as f:
+        ref = json.load(f)
+    g, faces = ref["geometry"], ref["faces"]
+    top, below = (tuple(int(v) for v in lv) for lv in
+                  (levels if levels is not None else (ref["ladder"][-1], ref["ladder"][-2])))
+    fine = p5.solve(*top, n_modes=ATLAS_N_SHAPES, geometry=g, faces=faces, start_vector="ones")
+    coarse = p5.solve(*below, n_modes=ATLAS_N_SHAPES, geometry=g, faces=faces,
+                      start_vector="ones")
+    blocks = render_blocks(g)
+    pts = np.vstack([_block_points(*bk) for bk in blocks])
+    bid = np.concatenate([np.full(int(np.prod(bk[2])), i) for i, bk in enumerate(blocks)])
+    rows, modes = [], []
+    for m in range(ATLAS_N_SHAPES):
+        Uf = p5.eval_mode_at(fine["mesh"], fine["vec_full"][:, m], pts)
+        Uc = p5.eval_mode_at(coarse["mesh"], coarse["vec_full"][:, m], pts)
+        rm = ref["modes"][m]
+        modes.append({"mode": m + 1, "lam_star": float(rm["lam_star"]),
+                      "lam_fem": float(fine["lam"][m]), "dominant": rm["dominant"],
+                      "character": rm["character"], "self_mac_levels": p5.point_mac(Uf, Uc)})
+        for (x, y, z), (ux, uy, uz), b in zip(pts, normalize_sign(Uf), bid):
+            rows.append({"structure": tag, "mode": m + 1, "block": int(b),
+                         "x": float(f"{x:.6g}"), "y": float(f"{y:.6g}"), "z": float(f"{z:.6g}"),
+                         "ux": float(f"{ux:.6g}"), "uy": float(f"{uy:.6g}"),
+                         "uz": float(f"{uz:.6g}")})
+    out = {"tag": tag, "reference": ref_name, "geometry": g, "faces": faces,
+           "level": list(top), "check_level": list(below), "start_vector": "ones",
+           "render_blocks": [{"lo": list(lo), "hi": list(hi), "n": list(n)} for lo, hi, n in blocks],
+           "modes": modes,
+           "sign": "each mode normalised so its largest-magnitude component is positive"}
+    manifest.write_csv(os.path.join(d, f"p5_mode_shapes_{tag}.csv"), rows)
+    manifest.write_json(os.path.join(d, f"p5_mode_atlas_{tag}.json"), out)
+    manifest.write_json(os.path.join(d, f"manifest_p5_mode_atlas_{tag}.json"), manifest.build({
+        "driver": "run_p5.extra_atlas", "tag": tag, "reference": ref_name,
+        "level": list(top), "check_level": list(below), "dof": int(fine["n_dof"]),
+        "solver": fine["solver"], "launch": manifest.launch_provenance()}))
+    return out
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 구조별 참조(E16 정사각 단면의 전제).
 #

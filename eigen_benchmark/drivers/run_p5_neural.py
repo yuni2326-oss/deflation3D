@@ -765,7 +765,7 @@ def grid_v2(outdir=None, tau: float | None = None, arms=None, width: int = 128,
             pair_scoring: bool = False, mc_points: int | None = None,
             mc_resample_every: int = 1, storage: str = "raw",
             batch_diag: bool = False, ref_level=None,
-            resample_every: int | None = None) -> dict:
+            resample_every: int | None = None, ladder_chunk: int | None = None) -> dict:
     """§5 본실험 — 훈련은 재표집 격자, 게이트·채점은 감사 격자.
 
     `pair_scoring`은 축퇴쌍이 있는 구조를 위한 군집 단위 정합이다(`match_clustered`). 끄면
@@ -845,7 +845,7 @@ def grid_v2(outdir=None, tau: float | None = None, arms=None, width: int = 128,
             return_params=save_params, normalize_input=normalize_input,
             mc_points=mc_points if resample else None,
             storage=storage if resample else "raw",
-            batch_diag=batch_diag and resample is not None)
+            batch_diag=batch_diag and resample is not None, ladder_chunk=ladder_chunk)
         w = out["w"]
         for m in range(1, n_modes + 1):
             target = ref[m]["lam_star"]
@@ -967,7 +967,7 @@ def grid_v2(outdir=None, tau: float | None = None, arms=None, width: int = 128,
         "reference_level": list(LADDER[-1] if ref_level is None else ref_level),
         "pair_scoring": bool(pair_scoring), "clusters": [list(c) for c in clusters],
         "mc_points": mc_points, "mc_resample_every": mc_resample_every if mc_points else None,
-        "storage": storage, "batch_diag": bool(batch_diag),
+        "storage": storage, "batch_diag": bool(batch_diag), "ladder_chunk": ladder_chunk,
         "fixed_train_grid": (None if fixed_train_grid is None
                              else list(fixed_train_grid)),
         "arms": list(arms), "control": bool(control), "n_modes": n_modes,
@@ -1374,6 +1374,63 @@ def e21c_run(outdir=None, device=None) -> dict:
     return grid_v2(outdir=d, device=device, tau=tau, **e21c_settings())
 
 
+
+
+# ── E21d (사전규정 2026-10-09-p5-e21d-prespecification.md) ─────────────────────
+# 착취의 자리(p5_exploit, 89f10a3)는 모서리 블록이 아니라 팔의 훈련 격자 절점 사이였고, 매 반복 재추첨(E21b)에서는
+# 격자족 어느 격자에도 절점이 없는 공통 빈틈으로 옮겨 갔다. 절점을 고정하지 않는 구적으로 바꾼다 — E21b와
+# 재추첨 주기(매 반복)는 같고 점 배치만 균등 몬테카를로다(상자의 e15b와 같은 조작, 표 11에서 60/60).
+# 점 수는 E21 격자족의 평균(45개, 1,268.9점)이다. 2026-10-09 사용자 결정(모서리 블록 세분 대신).
+E21D_TAG = "e21lb_exact_mc1"
+E21D_MC_POINTS = 1269
+
+
+def e21d_settings() -> dict:
+    return {**e21_settings("exact"), "tag": E21D_TAG, "mc_points": E21D_MC_POINTS,
+            "mc_resample_every": 1}
+
+
+def e21d_run(outdir=None, device=None) -> dict:
+    """E21d. τ는 `manifest_p5_tau_e21_lbracket.json`에서 읽고, 없으면 거부한다."""
+    import json
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    p = os.path.join(d, f"manifest_p5_tau_{E21_TAU_TAG}.json")
+    if not os.path.exists(p):
+        raise FileNotFoundError(f"{p}가 없다 — E21 τ 보정이 먼저다")
+    tau = float(json.load(open(p, encoding="utf-8"))["tau"])
+    return grid_v2(outdir=d, device=device, tau=tau, **e21d_settings())
+
+# ── E21e (사전규정 2026-10-09-p5-e21e-prespecification.md) ─────────────────────
+# E21c는 기준 구조의 밀도(팔의 단위 길이당 16–20점)로 모드 3만 고쳤다. 기준 구조에서 깊은 모드를 살린
+# 밀도는 그보다 높은 고해상 격자족(E3, 평균 5,400점)이다. 같은 점수의 격자족을 L에 그대로 쓴다 — 팔의
+# 단위 길이당 28–32점, 폭 14–16점, 두께 11–13점(45개, 평균 9,836점 — E21c의 4.7배). 감사 격자는 1.5배 규칙대로
+# (48, 24, 20)이고 인증을 통과한다(제작해 최악 3.1e-15). 사다리는 같은 4/3·2·8/3배다. τ는 E21의 것(보조).
+E21E_TAG = "e21lb_exact_hires"
+E21E_AUDIT_GRID = (48, 24, 20)
+E21E_LADDER = ((64, 32, 27), (96, 48, 40), (128, 64, 53))
+# 사다리 최상단은 78만 점이라 한 번에 재면 약 180 GB다(dgx02 실측: 10만 점 22.9 GB, 33만 점 75.8 GB).
+# 묶어 잰다 — 점마다의 상태는 점끼리 독립이라 같은 사다리다(`solve_p5_neural(ladder_chunk=)`). 10만 점 묶음의
+# 사다리 경로를 dgx01에서 끝까지 돌리니 텐서 최대 47.9 GB, 시스템 사용 최대 105.7/119 GiB였다 — 5만 점으로
+# 줄이고 사다리 직전·칸 사이에 할당자 캐시를 비운다(사전규정 보완 2026-10-09, 신경 자료 전).
+E21E_LADDER_CHUNK = 50_000
+
+
+def e21e_settings() -> dict:
+    return {**e21_settings("exact"), "tag": E21E_TAG, "family_axes": E3_FAMILY_AXES,
+            "audit_grid": E21E_AUDIT_GRID, "check_grid": E21E_LADDER[0],
+            "check_grids": list(E21E_LADDER), "ladder_chunk": E21E_LADDER_CHUNK}
+
+
+def e21e_run(outdir=None, device=None) -> dict:
+    """E21e. τ는 `manifest_p5_tau_e21_lbracket.json`에서 읽고, 없으면 거부한다."""
+    import json
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    p = os.path.join(d, f"manifest_p5_tau_{E21_TAU_TAG}.json")
+    if not os.path.exists(p):
+        raise FileNotFoundError(f"{p}가 없다 — E21 τ 보정이 먼저다")
+    tau = float(json.load(open(p, encoding="utf-8"))["tau"])
+    return grid_v2(outdir=d, device=device, tau=tau, **e21e_settings())
+
 # ── E22 두 층 이종재료 (사전규정 2026-10-04-p5-e22-prespecification.md) ────────────
 # E13-a 상자(h = 0.10)를 두께 방향 두 층으로 나눈다. z < h/2는 E = 1(E13-a와 같은 재료), 위는 E = 0.1.
 # 밀도·포아송비는 같아 질량 내적(사영·MAC)이 균질과 같고 강성 불연속만 달라진다. 구적 격자
@@ -1434,8 +1491,28 @@ E1_SEEDS = 20
 E1_ELAM_RULE = 0.05      # 중앙값이 이보다 작으면 e_optimization으로 귀속
 
 
-def reference_state(mode: int, grid, n_modes: int = 6):
-    """참조 모드의 12성분 상태 (u₀u₁u₂, ∂uᵢ/∂xⱼ)를 구적점에서. `_state_one`과 같은 배치."""
+def reference_states(mode: int, grids, n_modes: int, geometry, level, faces: str = "x0") -> list:
+    """한 번 푼 FEM 참조 모드의 12성분 상태를 여러 격자에서(E21f). 고정 시작벡터로 푼다."""
+    from ..problems import p5_block as p5
+    r = p5.solve(*level, n_modes=n_modes, geometry=geometry, faces=faces, start_vector="ones")
+    v = r["vec_full"][:, mode - 1]
+    out = []
+    for grid in grids:
+        pts, _ = p5._tensor_grid(grid, geometry)
+        u = p5.eval_mode_at(r["mesh"], v, pts).T
+        gr = p5.eval_grad_at(r["mesh"], v, pts)
+        out.append(np.concatenate([u, gr.transpose(1, 2, 0).reshape(9, -1)], axis=0))
+    return out
+
+
+def reference_state(mode: int, grid, n_modes: int = 6, geometry=None, level=None,
+                    faces: str = "x0"):
+    """참조 모드의 12성분 상태 (u₀u₁u₂, ∂uᵢ/∂xⱼ)를 구적점에서. `_state_one`과 같은 배치.
+
+    `geometry`를 주면(E21f) 그 구조의 참조 사다리 단계 `level`에서 고정 시작벡터로 푼다. 기본값은 커밋된
+    상자 경로 그대로다."""
+    if geometry is not None:
+        return reference_states(mode, [grid], n_modes, geometry, level, faces)[0]
     from ..problems import p5_block as p5
     from .run_p5 import LADDER
     pts, _ = p5._tensor_grid(grid)
@@ -1467,29 +1544,44 @@ def locking_signature(mac_mass: float, mac_energy: float) -> bool:
 def oracle_fit(outdir=None, mode: int = E1_MODE, n_seeds: int = E1_SEEDS,
                iters: int = E1_ITERS, width: int = 128, depth: int = 5,
                lr: float = 2e-3, quick: bool = False, device=None,
-               normalize_input: bool = False, tag: str = "") -> dict:
-    """§E1 — 참조 모드에 변위와 변형률 **둘 다** 적합시키고 Rayleigh 몫을 잰다."""
+               normalize_input: bool = False, tag: str = "", geometry=None,
+               ref_name: str = "p5_reference", ref_level=None, fit_grid=None,
+               check_grids=None, deflate=None) -> dict:
+    """§E1 — 참조 모드에 변위와 변형률 **둘 다** 적합시키고 Rayleigh 몫을 잰다.
+
+    E21f(2026-10-10)의 선택 인자 — 기본값이면 커밋된 상자 경로 그대로다. `geometry`·`ref_name`·`ref_level`은
+    다른 구조의 참조, `fit_grid`는 맞추는 격자(기본 감사 격자), `check_grids`는 맞춘 격자 밖에서 Rayleigh 몫을
+    다시 재는 격자들(첫 격자에서는 FEM과의 MAC도), `deflate`={npz, cond, n, grid, width, depth}는 다른 실행이
+    저장한 모드 1–n의 원시 상태로 맞춘 함수를 그 격자에서 정확 사영한 뒤의 Rayleigh 몫(`Lam_deflated`)이다."""
     import torch
     from torch.func import vmap
 
     from ..neural import p5_neural as p5n
 
     d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
-    ref = _reference(d)
+    ref = _reference(d, ref_name)
     lam_ref = float(ref[mode]["lam_star"])
     if quick:
         n_seeds, iters, width, depth = 2, 20, 16, 2
 
     torch.set_default_dtype(torch.float64)
     dev = device or ("cuda" if torch.cuda.is_available() else "cpu")
-    g = p5n.P5_GEOMETRY
+    g = p5n.P5_GEOMETRY if geometry is None else geometry
     nu, E, rho = float(g["nu"]), float(g["E"]), float(g["rho"])
-    pts, w = p5n.quadrature(AUDIT_GRID, dev, g)
+    fgrid = AUDIT_GRID if fit_grid is None else tuple(int(v) for v in fit_grid)
+    cgrids = [tuple(int(v) for v in cg) for cg in (check_grids or [])]
+    pts, w = p5n.quadrature(fgrid, dev, g)
     # E10: 망이 보는 좌표만 축별로 나눈다. 곱해지는 x는 물리 좌표로 남으므로 하드 BC는
     # 그대로다(솔버 변인이지 계기가 아니다).
     sc = (torch.tensor([g["L"], g["b"], g["h"]], device=dev)
           if normalize_input else None)
-    S_ref = torch.as_tensor(reference_state(mode, AUDIT_GRID), device=dev)
+    if geometry is None:
+        S_ref = torch.as_tensor(reference_state(mode, AUDIT_GRID), device=dev)
+        S_ref_check = None
+    else:
+        states = reference_states(mode, [fgrid] + cgrids[:1], max(6, mode), g, tuple(ref_level))
+        S_ref = torch.as_tensor(states[0], device=dev)
+        S_ref_check = torch.as_tensor(states[1], device=dev) if cgrids else None
 
     # **참조 자체의 바닥.** 같은 감사 격자에서 FEM 모드의 Rayleigh 몫이 Λ*에서 얼마나
     # 떨어지는지. 적합이 이보다 잘할 수는 없으므로 결과를 읽는 분모다.
@@ -1524,6 +1616,31 @@ def oracle_fit(outdir=None, mode: int = E1_MODE, n_seeds: int = E1_SEEDS,
     rows = []
     with torch.no_grad():
         S = vmap(lambda p: p5n._state_one(p, ens.base, pts, sc))(ens.params)
+        extra = [{} for _ in range(n_seeds)]
+        for i, cg in enumerate(cgrids):
+            pc, wc = p5n.quadrature(cg, dev, g)
+            Sc = vmap(lambda p: p5n._state_one(p, ens.base, pc, sc))(ens.params)
+            Ec = p5n.young_at(pc, g)
+            for s in range(n_seeds):
+                lc = float(p5n.rq_from_state(Sc[s], wc, nu, Ec, rho))
+                extra[s].update({f"Lam_check_{i}": lc, f"e_lam_check_{i}": abs(lc - lam_ref) / lam_ref,
+                                 f"check_grid_{i}": "x".join(map(str, cg))})
+                if i == 0 and S_ref_check is not None:
+                    extra[s]["mac_check_0"] = float(
+                        p5n._mass_ip(Sc[s], S_ref_check, wc) ** 2
+                        / (p5n._mass_ip(Sc[s], Sc[s], wc) * p5n._mass_ip(S_ref_check, S_ref_check, wc)))
+        if deflate:
+            from .p5_exploit import load_ensembles
+            ensD = load_ensembles(deflate["npz"], "exact", deflate["cond"], n_modes=int(deflate["n"]),
+                                  n_seeds=n_seeds, width=int(deflate["width"]),
+                                  depth=int(deflate["depth"]), device=dev)
+            pd_, wd = p5n.quadrature(tuple(int(v) for v in deflate["grid"]), dev, g)
+            Rd = [p5n.state_batch(e, pd_, None, None, g) for e in ensD]
+            Sd = vmap(lambda p: p5n._state_one(p, ens.base, pd_, sc))(ens.params)
+            Pd = vmap(lambda s_, *q: p5n._project_exact(s_, torch.stack(q, 0), wd))(Sd, *Rd)
+            Ed = p5n.young_at(pd_, g)
+            for s in range(n_seeds):
+                extra[s]["Lam_deflated"] = float(p5n.rq_from_state(Pd[s], wd, nu, Ed, rho))
         for s in range(n_seeds):
             lam = float(p5n.rq_from_state(S[s], w, nu, E, rho))
             mac = float(p5n._mass_ip(S[s], S_ref, w) ** 2
@@ -1537,8 +1654,8 @@ def oracle_fit(outdir=None, mode: int = E1_MODE, n_seeds: int = E1_SEEDS,
                          "e_lam": abs(lam - lam_ref) / lam_ref, "mac": mac,
                          "mac_energy": mac_e,
                          "locking_signature": locking_signature(mac, mac_e),
-                         "iters": iters, "grid": "x".join(map(str, AUDIT_GRID)),
-                         "width": width, "depth": depth})
+                         "iters": iters, "grid": "x".join(map(str, fgrid)),
+                         "width": width, "depth": depth, **extra[s]})
     med = float(np.median([r["e_lam"] for r in rows]))
     verdict = ("e_optimization" if med < E1_ELAM_RULE else "indeterminate")
     suf = f"_{tag}" if tag else ""
@@ -1551,7 +1668,13 @@ def oracle_fit(outdir=None, mode: int = E1_MODE, n_seeds: int = E1_SEEDS,
         "driver": "run_p5_neural.oracle_fit", "quick": bool(quick),
         "prespecification": "2026-09-11-p5-followup-prespecification.md, E1",
         "mode": mode, "n_seeds": n_seeds, "iters": iters,
-        "architecture": [width, depth], "audit_grid": list(AUDIT_GRID),
+        "architecture": [width, depth], "audit_grid": list(fgrid),
+        "geometry": _geometry_record(g), "reference": ref_name,
+        "ref_level": None if ref_level is None else list(ref_level), "fit_grid": list(fgrid),
+        "check_grids": [list(cg) for cg in cgrids],
+        "deflate": None if not deflate else {k: (list(v) if isinstance(v, tuple) else v)
+                                             for k, v in deflate.items()},
+        "launch": manifest.launch_provenance(),
         "loss": "(1 - mass MAC) + (1 - energy MAC) against the FEM reference mode",
         "e_lam_median": med, "rule": E1_ELAM_RULE, "verdict": verdict,
         "one_sided": "a median at or above the rule is indeterminate, not evidence "
@@ -1564,6 +1687,34 @@ def oracle_fit(outdir=None, mode: int = E1_MODE, n_seeds: int = E1_SEEDS,
     return {"rows": rows, "e_lam_median": med, "verdict": verdict,
             "reference_floor": floor, "outdir": d}
 
+
+
+# ── E21f (사전규정 2026-10-10-p5-e21f-prespecification.md) ─────────────────────
+# E21d의 모드 6 단계는 20셀 모두 z-지배인 모드 6·7을 건너뛰고 면내 모드 8(Λ ≈ 1.596)에 갔다. 시행공간이 모드 6을
+# 담는지 지도 적합으로 묻는다. 맞춘 망을 E21d가 저장한 모드 1–5로 감사 격자에서 정확 사영한 Rayleigh 몫이 E21d
+# 모드 6 단계의 Λ보다 낮으면, 더 낮은 함수가 시행공간에 있었는데 최적화가 놓친 것이다. 대조는 E21d가 실제로 찾은
+# 모드 8. 맞추는 격자는 E21c 격자족의 중앙(2,079점), 감사 격자와 사다리 최상단은 맞춘 격자 밖이다.
+E21F_MODES = (6, 8)
+E21F_FIT_GRID = (18, 9, 7)
+
+
+def e21f_settings(mode: int) -> dict:
+    return {"mode": int(mode), "tag": f"e21f_m{int(mode)}", "geometry": dict(E21_GEOMETRY),
+            "ref_name": E21_REF, "ref_level": E21_REF_LEVEL, "fit_grid": E21F_FIT_GRID,
+            "check_grids": [E21_AUDIT_GRID, E21_LADDER[-1]],
+            "deflate": {"npz": os.path.join(manifest.P5_OUTDIR, "p5_params_e21lb_exact_mc1.npz"),
+                        "cond": "mc", "n": 5, "grid": E21_AUDIT_GRID, "width": 128, "depth": 5}}
+
+
+def e21f_run(outdir=None, device=None) -> dict:
+    """E21f — 모드 6과 대조 모드 8. 저장 모드는 출력 폴더의 E21d 파라미터에서 읽는다."""
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    out = {}
+    for m in E21F_MODES:
+        k = e21f_settings(m)
+        k["deflate"] = {**k["deflate"], "npz": os.path.join(d, "p5_params_e21lb_exact_mc1.npz")}
+        out[m] = oracle_fit(outdir=d, device=device, **k)
+    return out
 
 # ── E2·E3 판정 (사전규정의 규칙을 코드로 박는다) ─────────────────────────────
 # 결과를 보고 규칙을 고르는 일이 없도록, 판정을 손이 아니라 이 함수가 한다.

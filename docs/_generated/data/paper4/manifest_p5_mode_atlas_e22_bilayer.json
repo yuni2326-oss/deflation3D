@@ -1,0 +1,32 @@
+{
+  "git_sha": "e2248e8f27c260a7d0f95f14f46ade442e9a74fe",
+  "git_branch": "unknown",
+  "git_dirty": true,
+  "timestamp_utc": "2026-10-09T01:32:44.519545+00:00",
+  "python": "3.12.3",
+  "numpy": "2.1.0",
+  "scipy": "1.17.1",
+  "mpmath": "1.3.0",
+  "platform": "Linux 6.17.0-1026-nvidia aarch64",
+  "precision": "fp64 + mpmath dps=50",
+  "driver": "run_p5.extra_atlas",
+  "tag": "e22_bilayer",
+  "reference": "p5_reference_e22_bilayer",
+  "level": [
+    48,
+    16,
+    8
+  ],
+  "check_level": [
+    24,
+    8,
+    4
+  ],
+  "dof": 161568,
+  "solver": "sparse",
+  "launch": {
+    "git_sha": "e2248e8f27c260a7d0f95f14f46ade442e9a74fe",
+    "git_dirty": false,
+    "timestamp_utc": "2026-10-09T01:32:44.505375+00:00"
+  }
+}

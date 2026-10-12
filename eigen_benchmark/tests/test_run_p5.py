@@ -343,3 +343,57 @@ def test_structure_reference_runs_on_the_bilayer(tmp_path):
     assert all(np.isfinite(lam)) and lam == sorted(lam) and lam[0] > 0
     assert all(len(c) == 1 for c in r["clusters"])
     assert r["worst_shape_cert"] >= 0.99
+
+
+# ── 그림 1 확장(2026-10-09): 상자 밖 두 구조의 도감 ───────────────────────────────
+
+def test_render_blocks_tile_the_l_bracket_and_keep_the_box_grid():
+    from eigen_benchmark.drivers import run_p5_neural as run
+    L = run_p5.render_blocks(run.E21_GEOMETRY)
+    assert [(lo, hi) for lo, hi, _ in L] == [((0.0, 0.0, 0.0), (0.8, 0.2, 0.1)),
+                                             ((0.8, 0.0, 0.0), (1.0, 0.2, 0.1)),
+                                             ((0.8, 0.2, 0.0), (1.0, 0.7, 0.1))]
+    step = run_p5.RENDER_STEP
+    for lo, hi, n in L:
+        assert n[2] == run_p5.ATLAS_GRID[2]
+        for k in (0, 1):
+            assert (hi[k] - lo[k]) / (n[k] - 1) == pytest.approx(step, rel=1e-9)
+    B = run_p5.render_blocks(run.E22_GEOMETRY)
+    assert B == [((0.0, 0.0, 0.0), (1.0, 0.2, 0.1), tuple(run_p5.ATLAS_GRID))]
+
+
+def test_extra_atlas_reads_its_labels_from_the_committed_reference():
+    """두 구조의 성격·지배 성분·Λ*는 원고 4.7절이 인용한 구조 참조에서 온다 — 도감이 따로 정하지 않는다."""
+    assert run_p5.EXTRA_ATLAS == {"e21_lbracket": "p5_reference_e21_lbracket",
+                                  "e22_bilayer": "p5_reference_e22_bilayer"}
+
+
+def test_committed_extra_atlas_agrees_with_its_reference():
+    for tag, ref_name in run_p5.EXTRA_ATLAS.items():
+        p = os.path.join(DATA, f"p5_mode_atlas_{tag}.json")
+        if not os.path.exists(p):
+            pytest.skip(f"{p}가 없다 — run_p5.extra_atlas를 먼저 돌린다")
+        with open(p, encoding="utf-8") as f:
+            atlas = json.load(f)
+        with open(os.path.join(DATA, f"{ref_name}.json"), encoding="utf-8") as f:
+            ref = json.load(f)
+        for m, rm in zip(atlas["modes"], ref["modes"][:4]):
+            assert (m["dominant"], m["character"], m["lam_star"]) == (
+                rm["dominant"], rm["character"], rm["lam_star"]), tag
+            assert m["self_mac_levels"] >= 0.999, (tag, m["mode"])
+        rows = _rows(DATA, f"p5_mode_shapes_{tag}.csv")
+        n_pts = sum(int(np.prod(b["n"])) for b in atlas["render_blocks"])
+        assert len(rows) == 4 * n_pts
+
+
+@pytest.mark.parametrize("tag,levels", [("e21_lbracket", ((20, 4, 2), (10, 2, 1))),
+                                        ("e22_bilayer", ((12, 4, 2), (6, 2, 2)))])
+def test_extra_atlas_writes_shapes_for_every_render_point(tmp_path, tag, levels):
+    """성긴 두 단으로 끝까지 돌려 산출물의 모양을 지킨다(커밋 산출물은 참조 사다리의 위 두 단)."""
+    out = run_p5.extra_atlas(tag, outdir=str(tmp_path), levels=levels)
+    assert [m["mode"] for m in out["modes"]] == [1, 2, 3, 4]
+    rows = _rows(str(tmp_path), f"p5_mode_shapes_{tag}.csv")
+    n_pts = sum(int(np.prod(b["n"])) for b in out["render_blocks"])
+    assert len(rows) == 4 * n_pts and {int(r["block"]) for r in rows} == set(range(len(out["render_blocks"])))
+    with open(os.path.join(str(tmp_path), f"p5_mode_atlas_{tag}.json"), encoding="utf-8") as f:
+        assert json.load(f)["level"] == list(levels[0])

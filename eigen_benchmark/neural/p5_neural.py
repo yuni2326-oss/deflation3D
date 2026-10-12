@@ -72,8 +72,20 @@ def mc_quadrature(n_points: int, rng, device: str = "cpu", geometry=None):
     뽑으므로 재표집 시드가 같으면 비트 단위로 재현된다."""
     torch.set_default_dtype(torch.float64)
     g = P5_GEOMETRY if geometry is None else geometry
+    if g.get("kind") == "L":
+        # E21d — 상자 셋(팔1·모서리·팔2)을 부피에 비례해 고르고 그 안에서 균등하게 뽑는다. 그러면 L 전체에서
+        # 균등이고 가중은 모두 V/n이다. 상자 경로(아래)는 커밋된 실행의 표본 그대로다.
+        L, b, h, a = (float(g[k]) for k in ("L", "b", "h", "a"))
+        lo = np.array([[0.0, 0.0, 0.0], [L - b, 0.0, 0.0], [L - b, b, 0.0]])
+        hi_b = np.array([[L - b, b, h], [L, b, h], [L, b + a, h]])
+        vols = np.prod(hi_b - lo, axis=1)
+        blk = rng.choice(len(vols), size=int(n_points), p=vols / vols.sum())
+        u = rng.uniform(size=(int(n_points), 3))
+        pts = torch.as_tensor(lo[blk] + u * (hi_b[blk] - lo[blk]), device=device)
+        w = torch.full((int(n_points),), float(vols.sum()) / int(n_points), device=device)
+        return pts, w
     if g.get("kind") is not None:
-        raise NotImplementedError("몬테카를로 구적은 균질 상자만 지원한다(L-브래킷·두 층은 합성 Gauss)")
+        raise NotImplementedError("몬테카를로 구적은 균질 상자와 L-브래킷만 지원한다(두 층은 합성 Gauss)")
     hi = np.array([g["L"], g["b"], g["h"]], dtype=float)
     pts = torch.as_tensor(rng.uniform(size=(int(n_points), 3)) * hi, device=device)
     vol = float(hi.prod())
@@ -368,7 +380,8 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
                     return_params: bool = False,
                     normalize_input: bool = False,
                     bc: str = "clamped_x0", mc_points: int | None = None,
-                    storage: str = "raw", batch_diag: bool = False) -> dict:
+                    storage: str = "raw", batch_diag: bool = False,
+                    ladder_chunk: int | None = None) -> dict:
     """3D 블록의 최저 n_modes개 Λ를 순차 Rayleigh 최소화로 푼다.
 
     `projection`은 P1·P4와 같은 세 규칙이다. P5가 묻는 것은 raw 저장 스팬이 질량-직교
@@ -394,7 +407,11 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
     같다. `mc_points`는 훈련 구적을 균등 몬테카를로로 바꾼다(`resample_every`마다 새 표본,
     deflation과 Rayleigh 몫이 같은 표본을 쓴다). `batch_diag`는 훈련 표본 위 저장 집합의
     정규화 그람 최대 비대각을 스냅샷마다 재어 마지막 10 %의 평균을 남기는 계측이다.
-    세 인자 모두 기본값이면 커밋된 경로와 같다."""
+    세 인자 모두 기본값이면 커밋된 경로와 같다.
+
+    `ladder_chunk`(E21e)는 사다리 칸의 원시 상태를 점 묶음 단위로 재어 이어 붙인다. 점마다의 상태는
+    점끼리 독립이라 같은 사다리이며, 최상단이 GB10 메모리를 넘는 격자에서만 쓴다. 기본값 None이면
+    커밋된 경로 그대로다."""
     if storage not in STORAGE:
         raise ValueError(f"storage는 {STORAGE} 중 하나여야 합니다: {storage!r}")
     if mc_points and not resample_every:
@@ -612,12 +629,20 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
         # 기준은 **감사 격자의 Λ**다. 훈련 격자와 비교하면 재표집 자체가 드리프트로 잡힌다.
         base = np.asarray(lam).T
         measured = [base]
+        if ladder_chunk is not None:
+            # E21e 보완 — 학습 동안 쌓인 할당자 캐시를 비우고 사다리에 들어간다(칸마다도). 기본 경로는 그대로다.
+            torch.cuda.empty_cache()
         for gg in rungs:
             pts2, w2 = quadrature(gg, dev, g)
             E2 = young_at(pts2, g)
             with torch.no_grad():
                 prev2, chk = [], []
-                raw2 = [vmap(lambda p, e=e: _state_one(p, e.base, pts2, sc, dist, g))(e.params)
+                if ladder_chunk is None:
+                    raw2 = [vmap(lambda p, e=e: _state_one(p, e.base, pts2, sc, dist, g))(e.params)
+                            for e in ensembles]
+                else:
+                    raw2 = [torch.cat([vmap(lambda p, e=e, c=c: _state_one(p, e.base, c, sc, dist, g))(
+                        e.params) for c in torch.split(pts2, int(ladder_chunk))], dim=-1)
                         for e in ensembles]
                 stored2 = raw2 if storage == "raw" else list(_orthogonalized(tuple(raw2)))
                 for i2, S2 in enumerate(raw2):
@@ -630,6 +655,9 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
                                .cpu().numpy().copy())
                     prev2.append(stored2[i2].detach())
             measured.append(np.asarray(chk).T)
+            if ladder_chunk is not None:
+                del raw2, stored2, prev2, chk, S2, Sp2
+                torch.cuda.empty_cache()
         lam_check = measured[1]
         drift = np.abs(lam_check - base) / np.abs(base)
         lam_ladder = np.stack(measured, axis=-1)

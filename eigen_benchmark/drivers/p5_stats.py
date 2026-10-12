@@ -790,13 +790,13 @@ def training_exploitation(recs) -> dict:
 E21B_TAG = "e21lb_exact_g1"
 
 
-def _vs_e21_exact(recs_new, recs_exact, new_tag: str, B: int, seed: int) -> dict:
-    """L-브래킷 정확 arm 한 조건 대 E21 정확 arm(E21b·E21c 공통). D = acc₄₋₆(조건) − acc₄₋₆(E21 정확),
-    게이트 없는 정확도, 시드 짝지음(E17·E19와 같은 판정량)."""
+def _vs_condition(recs_new, recs_base, new_tag: str, base_tag: str, B: int, seed: int) -> dict:
+    """L-브래킷 정확 arm 두 조건의 대비. D = acc₄₋₆(조건) − acc₄₋₆(기준), 게이트 없는 정확도, 시드 짝지음
+    (E17·E19와 같은 판정량). 착취(하한 위반)와 사다리 미해상을 두 조건에 나란히 붙인다."""
     a = _seed_share(recs_new, accurate, E21_MODES)
-    b = _seed_share(recs_exact, accurate, E21_MODES)
+    b = _seed_share(recs_base, accurate, E21_MODES)
     ci = paired_bootstrap(a, b, B, seed)
-    named = {new_tag: recs_new, E21_TAGS["exact"]: recs_exact}
+    named = {new_tag: recs_new, base_tag: recs_base}
     return {"contrast": ci, "verdict": _rule(ci),
             "acc_4_6": {k: _n_acc(rs, E21_MODES) for k, rs in named.items()},
             "accurate_by_mode": {k: {m: int(sum(accurate(r) for r in rs if r["mode"] == m))
@@ -806,6 +806,11 @@ def _vs_e21_exact(recs_new, recs_exact, new_tag: str, B: int, seed: int) -> dict
             "ladder_unresolved": {k: {m: ladder_counts([r for r in rs if r["mode"] == m])["unresolved"]
                                       for m in sorted({r["mode"] for r in rs})}
                                   for k, rs in named.items()}}
+
+
+def _vs_e21_exact(recs_new, recs_exact, new_tag: str, B: int, seed: int) -> dict:
+    """대 E21 정확 arm(E21b·E21c·E21e 공통)."""
+    return _vs_condition(recs_new, recs_exact, new_tag, E21_TAGS["exact"], B, seed)
 
 
 def e21b_from_records(recs_g1, recs_exact, B: int = B_DEFAULT, seed: int = SEED) -> dict:
@@ -829,6 +834,89 @@ def e21c(data_dir: str = DATA_DIR) -> dict | None:
         return None
     return e21c_from_records(dense, ex)
 
+
+
+
+# E21d — E21b의 점 배치를 균등 몬테카를로로(사전규정 2026-10-09-p5-e21d-prespecification.md).
+E21D_TAG = "e21lb_exact_mc1"
+
+
+def e21d_from_records(recs_mc, recs_g1, recs_exact, B: int = B_DEFAULT, seed: int = SEED) -> dict:
+    """판정은 대 E21b(같은 매 반복 재추첨, 점 배치만 다르다). `vs_e21_exact`는 같은 판정량을 E21 정확 arm과
+    시드끼리 짝지어 읽는다(사전규정 §3.1)."""
+    out = _vs_condition(recs_mc, recs_g1, E21D_TAG, E21B_TAG, B, seed)
+    ci = paired_bootstrap(_seed_share(recs_mc, accurate, E21_MODES),
+                          _seed_share(recs_exact, accurate, E21_MODES), B, seed)
+    out["vs_e21_exact"] = {"contrast": ci, "verdict": _rule(ci),
+                           "acc_4_6": {E21D_TAG: _n_acc(recs_mc, E21_MODES),
+                                       E21_TAGS["exact"]: _n_acc(recs_exact, E21_MODES)}}
+    return out
+
+
+def e21d(data_dir: str = DATA_DIR) -> dict | None:
+    try:
+        mc, g1 = load(data_dir, E21D_TAG), load(data_dir, E21B_TAG)
+        ex = load(data_dir, E21_TAGS["exact"])
+    except FileNotFoundError:
+        return None
+    return e21d_from_records(mc, g1, ex)
+
+# E21e — E21 정확 arm에 기준 구조의 고해상 격자족(사전규정 2026-10-09-p5-e21e-prespecification.md).
+E21E_TAG = "e21lb_exact_hires"
+
+
+def e21e_from_records(recs_hires, recs_exact, recs_dense, B: int = B_DEFAULT,
+                      seed: int = SEED) -> dict:
+    """판정은 E21b·E21c와 같다(대 E21 정확). `vs_e21c`는 같은 판정량을 E21c와 시드끼리 짝지어 읽는다 —
+    기준 구조의 밀도를 넘는 밀도가 더 살리는지(사전규정 §3.1)."""
+    out = _vs_e21_exact(recs_hires, recs_exact, E21E_TAG, B, seed)
+    ci = paired_bootstrap(_seed_share(recs_hires, accurate, E21_MODES),
+                          _seed_share(recs_dense, accurate, E21_MODES), B, seed)
+    out["vs_e21c"] = {"contrast": ci, "verdict": _rule(ci),
+                      "acc_4_6": {E21E_TAG: _n_acc(recs_hires, E21_MODES),
+                                  E21C_TAG: _n_acc(recs_dense, E21_MODES)}}
+    return out
+
+
+def e21e(data_dir: str = DATA_DIR) -> dict | None:
+    try:
+        hires, ex = load(data_dir, E21E_TAG), load(data_dir, E21_TAGS["exact"])
+        dense = load(data_dir, E21C_TAG)
+    except FileNotFoundError:
+        return None
+    return e21e_from_records(hires, ex, dense)
+
+
+# E21f — L-브래킷 모드 6의 지도 적합(사전규정 2026-10-10-p5-e21f-prespecification.md).
+E21F_FILES = {6: "p5_e1_oracle_fit_e21f_m6.csv", 8: "p5_e1_oracle_fit_e21f_m8.csv"}
+E21F_CONTROL_RULE = 0.05
+
+
+def e21f_from_rows(rows6, rows8, lam_e21d6) -> dict:
+    """주 판정: 모드 6에 맞춘 망을 E21d의 저장 모드 1–5로 정확 사영한 Rayleigh 몫의 중앙값 대 E21d 모드 6 단계가
+    실제로 도달한 Λ의 중앙값. 낮으면 규칙 1(더 낮은 함수가 시행공간에 있었는데 최적화가 놓쳤다), 아니면 규칙 2
+    (이 예산에서 표현의 한계). 대조: 모드 8 적합의 맞춘 격자 밖 e_λ 중앙값이 0.05 미만이면 적합 절차가 그
+    정확도를 낸다."""
+    ld = float(np.median([float(r["Lam_deflated"]) for r in rows6]))
+    le = float(np.median([float(v) for v in lam_e21d6]))
+    e6 = float(np.median([float(r["e_lam_check_0"]) for r in rows6]))
+    e8 = float(np.median([float(r["e_lam_check_0"]) for r in rows8]))
+    return {"lam_deflated_median": ld, "lam_e21d_median": le,
+            "verdict": "rule1" if ld < le else "rule2",
+            "n_below_e21d": int(sum(float(r["Lam_deflated"]) < le for r in rows6)),
+            "e_lam_held_out_median": {"6": e6, "8": e8},
+            "control_ok": bool(e8 < E21F_CONTROL_RULE)}
+
+
+def e21f(data_dir: str = DATA_DIR) -> dict | None:
+    import csv
+    try:
+        rows = {m: list(csv.DictReader(open(os.path.join(data_dir, f), encoding="utf-8")))
+                for m, f in E21F_FILES.items()}
+        mc = load(data_dir, E21D_TAG)
+    except FileNotFoundError:
+        return None
+    return e21f_from_rows(rows[6], rows[8], [r["Lam"] for r in mc if int(r["mode"]) == 6])
 
 def e21b(data_dir: str = DATA_DIR) -> dict | None:
     try:
@@ -897,7 +985,9 @@ def main(data_dir: str = DATA_DIR, outdir: str | None = None) -> dict:
            "e15": e15(data_dir),
            "e16": e16(data_dir),
            "e17": e17(data_dir), "e18": e18(data_dir), "e19": e19(data_dir), "e20": e20(data_dir),
-           "e21": e21(data_dir), "e21b": e21b(data_dir), "e21c": e21c(data_dir), "e22": e22(data_dir),
+           "e21": e21(data_dir), "e21b": e21b(data_dir), "e21c": e21c(data_dir),
+           "e21d": e21d(data_dir), "e21e": e21e(data_dir), "e21f": e21f(data_dir),
+           "e22": e22(data_dir),
            "e14_registered": e14_registered(obs),
            "e14_fixed_effects": e14_fixed_effects(obs),
            "e14_sensitivity_post_hoc": e14_sensitivity(obs)}

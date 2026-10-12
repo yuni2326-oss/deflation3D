@@ -39,3 +39,26 @@ def test_p5_atlas_reads_its_shapes_from_the_committed_artifact_only():
     import inspect
     src = inspect.getsource(figures_p5)
     assert "p5_block" not in src and "solve(" not in src
+
+
+def test_p5_atlas_adds_the_two_further_structures_with_the_wall_at_mode_four():
+    """그림 1 확장(2026-10-09) — L-브래킷과 두 층 구조 행. 두 구조 모두 성분 공유 규칙이 벽을 모드 4로
+    짚는다(원고 4.7절, 사전규정 2026-10-04)."""
+    import json
+    tags = [t for t, *_ in figures_p5.ATLAS]
+    assert tags[-2:] == ["e21_lbracket", "e22_bilayer"]
+    assert set(figures_p5.ATLAS_EXTRA) == set(tags[-2:])
+    for tag in figures_p5.ATLAS_EXTRA:
+        with open(os.path.join(DATA_P5, f"p5_mode_atlas_{tag}.json"), encoding="utf-8") as f:
+            atlas = json.load(f)
+        assert figures_p5.predicted_wall([m["dominant"] for m in atlas["modes"]]) == 4, tag
+
+
+def test_block_faces_skip_inner_faces_and_keep_the_default_order():
+    import numpy as np
+    axes = (np.linspace(0, 1, 3), np.linspace(0, 1, 2), np.linspace(0, 1, 2))
+    P = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1)
+    full = figures_p5._block_faces(P)
+    assert len(full) == 10
+    assert len(figures_p5._block_faces(P, frozenset({"x1"}))) == 9
+    assert np.array_equal(figures_p5._block_faces(P, frozenset()), full)

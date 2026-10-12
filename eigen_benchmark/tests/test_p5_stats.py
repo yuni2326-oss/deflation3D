@@ -493,3 +493,63 @@ def test_e21c_uses_the_e21b_quantity_against_the_same_e21_exact_arm():
     assert r["acc_4_6"] == {"e21lb_exact_dense": 20, "e21lb_exact": 0}
     rb = st.e21b_from_records(dense, ex, B=2000)
     assert rb["contrast"] == r["contrast"] and rb["acc_4_6"] == {"e21lb_exact_g1": 20, "e21lb_exact": 0}
+
+
+# ── E21e L-브래킷 정확 arm 고해상 격자족 (사전규정 2026-10-09-p5-e21e-prespecification.md) ──
+
+def test_e21e_judges_against_e21_exact_and_reads_against_e21c():
+    hires = _acc_recs(lambda m, s: True)
+    ex = _acc_recs(lambda m, s: m < 4)
+    dense = _acc_recs(lambda m, s: m < 5)
+    for r_ in hires + ex + dense:
+        r_.update(Lam=1.0, Lam_train=1.0, Lam_ref=1.0, ladder_tail_spread=1e-6)
+    r = st.e21e_from_records(hires, ex, dense, B=2000)
+    assert r["contrast"][0] == pytest.approx(1.0) and r["verdict"] == "rule1"
+    assert r["acc_4_6"] == {"e21lb_exact_hires": 60, "e21lb_exact": 0}
+    v = r["vs_e21c"]
+    assert v["contrast"][0] == pytest.approx(2 / 3) and v["verdict"] == "rule1"
+    assert v["acc_4_6"] == {"e21lb_exact_hires": 60, "e21lb_exact_dense": 20}
+    assert st.e21e_from_records(ex, ex, ex, B=500)["vs_e21c"]["verdict"] == "rule2"
+
+
+
+# ── E21d L-브래킷 정확 arm 매 반복 균등 몬테카를로 (사전규정 2026-10-09-p5-e21d-prespecification.md) ──
+
+def test_e21d_judges_against_e21b_and_reads_against_e21_exact():
+    mc = _acc_recs(lambda m, s: True)
+    g1 = _acc_recs(lambda m, s: m < 4)
+    ex = _acc_recs(lambda m, s: m < 5)
+    for r_ in mc + g1 + ex:
+        r_.update(Lam=1.0, Lam_train=1.0, Lam_ref=1.0, ladder_tail_spread=1e-6)
+    r = st.e21d_from_records(mc, g1, ex, B=2000)
+    assert r["contrast"][0] == pytest.approx(1.0) and r["verdict"] == "rule1"
+    assert r["acc_4_6"] == {"e21lb_exact_mc1": 60, "e21lb_exact_g1": 0}
+    v = r["vs_e21_exact"]
+    assert v["contrast"][0] == pytest.approx(2 / 3) and v["verdict"] == "rule1"
+    assert v["acc_4_6"] == {"e21lb_exact_mc1": 60, "e21lb_exact": 20}
+    assert st.e21d_from_records(g1, g1, g1, B=500)["verdict"] == "rule2"
+
+
+def test_vs_e21_exact_is_unchanged_by_the_general_helper():
+    """E21b·E21c·E21e의 커밋된 판정이 그대로여야 한다 — 일반화한 비교 함수가 같은 값을 낸다."""
+    a = _acc_recs(lambda m, s: s % 3 == 0)
+    b = _acc_recs(lambda m, s: s % 5 == 0)
+    for r_ in a + b:
+        r_.update(Lam=1.0, Lam_train=1.0, Lam_ref=1.0, ladder_tail_spread=1e-6)
+    x = st._vs_e21_exact(a, b, "new", 500, 7)
+    y = st._vs_condition(a, b, "new", st.E21_TAGS["exact"], 500, 7)
+    assert x == y
+
+
+# ── E21f 지도 적합 판정 (사전규정 2026-10-10-p5-e21f-prespecification.md) ──
+
+def test_e21f_rule_compares_the_deflated_fit_with_the_e21d_stage():
+    rows8 = [{"e_lam_check_0": 0.02, "Lam_deflated": 1.6}] * 20
+    good = [{"Lam_deflated": 1.30, "e_lam_check_0": 0.01}] * 20
+    r = st.e21f_from_rows(good, rows8, [1.6] * 20)
+    assert r["verdict"] == "rule1" and r["control_ok"] is True
+    assert r["lam_deflated_median"] == pytest.approx(1.30) and r["lam_e21d_median"] == pytest.approx(1.6)
+    bad = [{"Lam_deflated": 1.70, "e_lam_check_0": 0.30}] * 20
+    assert st.e21f_from_rows(bad, rows8, [1.6] * 20)["verdict"] == "rule2"
+    assert st.e21f_from_rows(good, [{"e_lam_check_0": 0.2, "Lam_deflated": 1.9}] * 20,
+                             [1.6] * 20)["control_ok"] is False

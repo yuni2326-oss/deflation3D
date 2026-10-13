@@ -918,6 +918,33 @@ def e21f(data_dir: str = DATA_DIR) -> dict | None:
         return None
     return e21f_from_rows(rows[6], rows[8], [r["Lam"] for r in mc if int(r["mode"]) == 6])
 
+
+# E21g — 입력 정규화(사전규정 2026-10-13-p5-e21g-prespecification.md).
+E21G_TAGS = {"mc": "e21lb_exact_mc1_norm", "gauss": "e21lb_exact_norm"}
+
+
+def e21g_from_records(recs_mc_norm, recs_mc, recs_gauss_norm, recs_exact, B: int = B_DEFAULT,
+                      seed: int = SEED) -> dict:
+    """주 판정 `mode6`: 모드 6의 게이트 없는 정확, MC + 정규화 대 E21d(시드 짝지음). 보조 `mc_4_6`: 같은 두 조건의
+    모드 4–6. 보조 `gauss_4_6`: 가우스 + 정규화 대 E21 정확의 모드 4–6(`_vs_condition`)."""
+    a = _seed_share(recs_mc_norm, accurate, (6,))
+    b = _seed_share(recs_mc, accurate, (6,))
+    ci = paired_bootstrap(a, b, B, seed)
+    mode6 = {"contrast": ci, "verdict": _rule(ci),
+             "acc_6": {E21G_TAGS["mc"]: _n_acc(recs_mc_norm, (6,)), E21D_TAG: _n_acc(recs_mc, (6,))}}
+    mc = _vs_condition(recs_mc_norm, recs_mc, E21G_TAGS["mc"], E21D_TAG, B, seed)
+    ga = _vs_condition(recs_gauss_norm, recs_exact, E21G_TAGS["gauss"], E21_TAGS["exact"], B, seed)
+    return {"mode6": mode6, "mc_4_6": mc, "gauss_4_6": ga}
+
+
+def e21g(data_dir: str = DATA_DIR) -> dict | None:
+    try:
+        recs = {k: load(data_dir, t) for k, t in E21G_TAGS.items()}
+        mc, ex = load(data_dir, E21D_TAG), load(data_dir, E21_TAGS["exact"])
+    except FileNotFoundError:
+        return None
+    return e21g_from_records(recs["mc"], mc, recs["gauss"], ex)
+
 def e21b(data_dir: str = DATA_DIR) -> dict | None:
     try:
         g1, ex = load(data_dir, E21B_TAG), load(data_dir, E21_TAGS["exact"])
@@ -987,6 +1014,7 @@ def main(data_dir: str = DATA_DIR, outdir: str | None = None) -> dict:
            "e17": e17(data_dir), "e18": e18(data_dir), "e19": e19(data_dir), "e20": e20(data_dir),
            "e21": e21(data_dir), "e21b": e21b(data_dir), "e21c": e21c(data_dir),
            "e21d": e21d(data_dir), "e21e": e21e(data_dir), "e21f": e21f(data_dir),
+           "e21g": e21g(data_dir),
            "e22": e22(data_dir),
            "e14_registered": e14_registered(obs),
            "e14_fixed_effects": e14_fixed_effects(obs),

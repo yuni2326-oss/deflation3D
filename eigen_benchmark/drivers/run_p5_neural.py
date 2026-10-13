@@ -1400,6 +1400,31 @@ def e21d_run(outdir=None, device=None) -> dict:
     tau = float(json.load(open(p, encoding="utf-8"))["tau"])
     return grid_v2(outdir=d, device=device, tau=tau, **e21d_settings())
 
+
+# ── E21g (사전규정 2026-10-13-p5-e21g-prespecification.md) ─────────────────────
+# 숨은 에너지는 막 변형이었고(사후 분해, 829f56c), 매 반복 MC의 모드 6 단계도 막 모드 8로 갔다. 두께 0.1 대 길이 1의
+# 좌표 축척이 두께 방향으로 고른 함수를 고르게 한다는 후보를 입력 정규화(외접 상자로 나눔)로 시험한다. 주 판정은
+# E21d에 정규화만 더한 조건(착취 없이 모드 6의 건너뜀만 남은 자리), 보조는 E21 정확 arm에 정규화만 더한 조건이다.
+E21G_TAGS = {"mc": "e21lb_exact_mc1_norm", "gauss": "e21lb_exact_norm"}
+
+
+def e21g_settings(arm: str) -> dict:
+    if arm not in E21G_TAGS:
+        raise ValueError(f"E21g 조건은 {sorted(E21G_TAGS)} 중 하나여야 합니다: {arm!r}")
+    base = e21d_settings() if arm == "mc" else e21_settings("exact")
+    return {**base, "tag": E21G_TAGS[arm], "normalize_input": True}
+
+
+def e21g_run(arm: str, outdir=None, device=None) -> dict:
+    """E21g 조건 하나. τ는 `manifest_p5_tau_e21_lbracket.json`에서 읽고, 없으면 거부한다."""
+    import json
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    p = os.path.join(d, f"manifest_p5_tau_{E21_TAU_TAG}.json")
+    if not os.path.exists(p):
+        raise FileNotFoundError(f"{p}가 없다 — E21 τ 보정이 먼저다")
+    tau = float(json.load(open(p, encoding="utf-8"))["tau"])
+    return grid_v2(outdir=d, device=device, tau=tau, **e21g_settings(arm))
+
 # ── E21e (사전규정 2026-10-09-p5-e21e-prespecification.md) ─────────────────────
 # E21c는 기준 구조의 밀도(팔의 단위 길이당 16–20점)로 모드 3만 고쳤다. 기준 구조에서 깊은 모드를 살린
 # 밀도는 그보다 높은 고해상 격자족(E3, 평균 5,400점)이다. 같은 점수의 격자족을 L에 그대로 쓴다 — 팔의

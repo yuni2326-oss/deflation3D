@@ -553,3 +553,22 @@ def test_e21f_rule_compares_the_deflated_fit_with_the_e21d_stage():
     assert st.e21f_from_rows(bad, rows8, [1.6] * 20)["verdict"] == "rule2"
     assert st.e21f_from_rows(good, [{"e_lam_check_0": 0.2, "Lam_deflated": 1.9}] * 20,
                              [1.6] * 20)["control_ok"] is False
+
+
+
+# ── E21g 입력 정규화 (사전규정 2026-10-13-p5-e21g-prespecification.md) ──
+
+def test_e21g_primary_is_mode_six_under_monte_carlo_and_secondary_the_gauss_arm():
+    mc_norm = _acc_recs(lambda m, s: True)
+    mc = _acc_recs(lambda m, s: m < 6)
+    ga_norm = _acc_recs(lambda m, s: m < 5)
+    ex = _acc_recs(lambda m, s: m < 4)
+    for r_ in mc_norm + mc + ga_norm + ex:
+        r_.update(Lam=1.0, Lam_train=1.0, Lam_ref=1.0, ladder_tail_spread=1e-6)
+    r = st.e21g_from_records(mc_norm, mc, ga_norm, ex, B=2000)
+    assert r["mode6"]["contrast"][0] == pytest.approx(1.0) and r["mode6"]["verdict"] == "rule1"
+    assert r["mode6"]["acc_6"] == {"e21lb_exact_mc1_norm": 20, "e21lb_exact_mc1": 0}
+    assert r["mc_4_6"]["acc_4_6"] == {"e21lb_exact_mc1_norm": 60, "e21lb_exact_mc1": 40}
+    assert r["gauss_4_6"]["contrast"][0] == pytest.approx(1 / 3)
+    assert r["gauss_4_6"]["acc_4_6"] == {"e21lb_exact_norm": 20, "e21lb_exact": 0}
+    assert st.e21g_from_records(mc, mc, ex, ex, B=500)["mode6"]["verdict"] == "rule2"

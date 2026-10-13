@@ -27,7 +27,8 @@ eigen_benchmark/
   drivers/run_p5_neural.py  experiment drivers: tau calibration, main grid, follow-ups
   drivers/p5_stats.py       every interval and test reported, recomputed from committed records
   drivers/p5_exploit.py     post hoc re-evaluation of stored networks: where the training grid misses
-                            energy (by block and along the arms), stage shapes against FEM modes
+                            energy (by block and along the arms), its membrane, bending and
+                            out-of-plane parts, stage shapes against FEM modes
   drivers/manifest.py       provenance (environment, git SHA at launch and at write time)
   render/figures_p5.py      figures, drawn from committed artifacts only (no FEM solve)
   quadrature.py, metrics.py shared numerics: Gauss-Legendre rules, MAC and classification
@@ -100,7 +101,9 @@ own settings in the same module:
 For the L-bracket a quadrature grid (n_L, n_W, n_T) counts points per unit length along each arm, across
 the width and through the thickness; for the two-layer block the third entry counts points per layer.
 Uniform Monte Carlo training quadrature is available on the box and on the L-bracket (blocks drawn in
-proportion to their volume); input normalization is box-only, and the two-layer block refuses both.
+proportion to their volume), and the two-layer block refuses it. Input normalization divides the
+coordinates the network sees by the bounding box of the domain (`input_scale`; the L-bracket from
+`e21g_settings`); the hard clamp keeps the physical coordinate.
 When the top ladder rung would not fit in node memory, the ladder is measured in point chunks
 (`ladder_chunk`); point-wise states are independent, so the ladder is the same.
 `oracle_fit` (the supervised-fit control) takes another structure's reference, held-out check grids
@@ -125,7 +128,8 @@ budget and input normalization), `e20r_b4` (fourfold Monte Carlo sample), `e21lb
 denser family with audit grid (30, 15, 12)), `e21lb_exact_mc1` (L-bracket, uniform Monte Carlo points
 redrawn at every iteration), `e21lb_exact_hires` (L-bracket, high-resolution family with audit grid
 (48, 24, 20)), `e22bi_*` (two-layer block). Supervised fits of the L-bracket are in
-`p5_e1_oracle_fit_e21f_m{6,8}.csv`, the post hoc exploitation analyses in `p5_exploit_*.csv`, and the
+`p5_e1_oracle_fit_e21f_m{6,8}.csv`, the post hoc exploitation analyses in `p5_exploit_*.csv` (the
+membrane, bending and out-of-plane split in `p5_exploit_strain_e21.csv`), and the
 mode atlases of the L-bracket and the two-layer block in `p5_mode_{shapes,atlas}_<structure>.*`.
 Trained network parameters (about 60 MB per run) are not included. The post hoc analyses of
 `p5_exploit` and the projection step of the supervised fits re-read them, so their outputs are

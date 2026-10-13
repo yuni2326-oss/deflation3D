@@ -688,12 +688,26 @@ def test_neural_quadrature_on_the_l_bracket_is_the_numpy_composite_grid():
     assert np.allclose(pts.numpy(), P, atol=0) and np.allclose(w.numpy(), W, atol=0)
 
 
-def test_box_only_paths_refuse_the_l_bracket():
-    """입력 정규화는 상자 영역만 지원한다. 몬테카를로는 E21d부터 L-브래킷도 지원한다(아래)."""
+def test_input_scale_is_the_bounding_box_of_each_structure():
+    """E21g — 망이 보는 좌표를 축별로 외접 상자로 나눈다. 상자의 축척은 커밋된 E8·E19와 같다."""
+    assert p5n.input_scale(p5.P5_GEOMETRY) == (1.0, 0.2, 0.04)
     g = {"kind": "L", "L": 1.0, "b": 0.2, "h": 0.1, "a": 0.5, "E": 1.0, "rho": 1.0, "nu": 0.29}
-    with pytest.raises(NotImplementedError):
-        p5n.solve_p5_neural(n_modes=1, n_seeds=1, iters=1, width=4, depth=1, device="cpu",
-                            geometry=g, grid=(6, 3, 3), normalize_input=True)
+    assert p5n.input_scale(g) == (1.0, 0.7, 0.1)
+
+
+def test_input_normalisation_on_the_l_bracket_keeps_the_clamped_face_exact():
+    g = {"kind": "L", "L": 1.0, "b": 0.2, "h": 0.1, "a": 0.5, "E": 1.0, "rho": 1.0, "nu": 0.29}
+    kw = dict(n_modes=1, n_seeds=2, iters=10, width=16, depth=2, device="cpu", geometry=g,
+              grid=(6, 3, 3), audit_grid=(6, 3, 3))
+    base = p5n.solve_p5_neural(**kw)
+    norm = p5n.solve_p5_neural(**kw, normalize_input=True)
+    assert not np.array_equal(base["lam"], norm["lam"])
+    sc = torch.tensor(p5n.input_scale(g), dtype=torch.float64)
+    ens = p5n.EnsembleVecMLP3D(2, width=16, depth=2, seed=0, device="cpu")
+    face = torch.zeros(5, 3, dtype=torch.float64)
+    face[:, 1] = torch.linspace(0, 0.2, 5)
+    S = p5n.state_batch(ens, face, scale=sc, geometry=g)
+    assert float(S[:, :3].abs().max()) < 1e-300
 
 
 def test_mc_quadrature_on_the_l_bracket_is_uniform_over_its_volume():

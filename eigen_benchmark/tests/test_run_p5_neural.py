@@ -1342,3 +1342,27 @@ def test_e21f_fits_modes_six_and_eight_with_held_out_and_deflated_measures():
         assert dfl["npz"].endswith("p5_params_e21lb_exact_mc1.npz") and dfl["cond"] == "mc"
         assert dfl["n"] == 5 and dfl["grid"] == run.E21_AUDIT_GRID
         assert (dfl["width"], dfl["depth"]) == (128, 5)
+
+
+
+# ── E21g 입력 정규화 — 좌표 축척이 두께 방향으로 고른 함수를 고르게 하는가 (사전규정 2026-10-13) ──
+
+def test_e21g_adds_input_normalisation_to_e21d_and_to_the_e21_exact_arm():
+    mc, ga = run.e21g_settings("mc"), run.e21g_settings("gauss")
+    drop = lambda d: {k: v for k, v in d.items() if k not in ("tag", "normalize_input")}
+    assert drop(mc) == drop(run.e21d_settings()) and mc["normalize_input"] is True
+    assert drop(ga) == drop(run.e21_settings("exact")) and ga["normalize_input"] is True
+    assert (mc["tag"], ga["tag"]) == ("e21lb_exact_mc1_norm", "e21lb_exact_norm")
+    with pytest.raises(ValueError):
+        run.e21g_settings("qr")
+
+
+def test_e21g_run_reads_the_e21_tau_and_refuses_without_it(tmp_path, monkeypatch):
+    import json
+    with pytest.raises(FileNotFoundError):
+        run.e21g_run("mc", outdir=str(tmp_path))
+    (tmp_path / "manifest_p5_tau_e21_lbracket.json").write_text(json.dumps({"tau": 10.0}))
+    got = {}
+    monkeypatch.setattr(run, "grid_v2", lambda **kw: got.update(kw) or {"verdicts": None})
+    run.e21g_run("gauss", outdir=str(tmp_path), device="cpu")
+    assert got["tau"] == 10.0 and got["tag"] == "e21lb_exact_norm" and got["normalize_input"] is True

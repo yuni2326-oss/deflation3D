@@ -183,6 +183,14 @@ def young_at(pts, g):
     return torch.where(pts[:, 2] < 0.5 * float(g["h"]), lo, hi)
 
 
+
+def input_scale(g) -> tuple:
+    """입력 정규화(E8·E19·E21g)의 축별 축척 — 영역의 외접 상자. 상자와 두 층 구조는 (L, b, h), L-브래킷은
+    (L, b + a, h)다. 망이 보는 좌표만 나누므로 하드 BC는 물리 좌표 그대로 정확하다."""
+    if g.get("kind") == "L":
+        return (float(g["L"]), float(g["b"]) + float(g["a"]), float(g["h"]))
+    return (float(g["L"]), float(g["b"]), float(g["h"]))
+
 def rq_from_state(S, w, nu: float, E: float = 1.0, rho: float = 1.0):
     """상태에서 Λ = ∫ε:C:ε / ∫ρ|u|².
 
@@ -425,9 +433,8 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
     # E8(검토 §4.3): 망이 보는 좌표를 축별로 [0,1]³에 맞춘다. 원좌표는 축 스케일이
     # 최대 25배 다르다(z ∈ (0, 0.04)). **솔버 변인이지 계기가 아니다** — 켜면 시행공간이
     # 달라지므로 커밋된 실행과 비트 비교를 기대하지 않는다.
-    if normalize_input and g.get("kind") == "L":
-        raise NotImplementedError("입력 정규화는 상자 영역만 지원한다")
-    sc = (torch.tensor([g["L"], g["b"], g["h"]], device=device or
+    # E21g: L-브래킷은 외접 상자 (L, b + a, h)로 나눈다(`input_scale`). 상자의 축척은 커밋된 그대로다.
+    sc = (torch.tensor(input_scale(g), device=device or
                        ("cuda" if torch.cuda.is_available() else "cpu"))
           if normalize_input else None)
     # E13-b: 하드 BC의 거리함수. 기본값은 커밋된 한 면 고정이다.

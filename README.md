@@ -28,7 +28,8 @@ eigen_benchmark/
   drivers/p5_stats.py       every interval and test reported, recomputed from committed records
   drivers/p5_exploit.py     post hoc re-evaluation of stored networks: where the training grid misses
                             energy (by block and along the arms), its membrane, bending and
-                            out-of-plane parts, stage shapes against FEM modes
+                            out-of-plane parts, stage shapes against FEM modes; networks trained
+                            on normalized coordinates are re-evaluated with the same scale
   drivers/manifest.py       provenance (environment, git SHA at launch and at write time)
   render/figures_p5.py      figures, drawn from committed artifacts only (no FEM solve)
   quadrature.py, metrics.py shared numerics: Gauss-Legendre rules, MAC and classification
@@ -95,7 +96,7 @@ own settings in the same module:
 | Structure | Geometry | Reference ladder | Audit grid | τ | Settings |
 |---|---|---|---|---|---|
 | near-degenerate section | b = 0.105, h = 0.10 | as the square section | (30, 14, 14) | 0.5 | `followup_settings("e18_*")` |
-| L-bracket | arm 1 [0, 1] × [0, 0.2], arm 2 [0.8, 1] × [0.2, 0.7], h = 0.1 | `run_p5.L_LADDER` | (24, 12, 12) | 10 | `e21_settings`, `e21b_settings`–`e21f_settings` |
+| L-bracket | arm 1 [0, 1] × [0, 0.2], arm 2 [0.8, 1] × [0.2, 0.7], h = 0.1 | `run_p5.L_LADDER` | (24, 12, 12) | 10 | `e21_settings`, `e21b_settings`–`e21g_settings` |
 | two-layer block | E = 1 below and 0.1 above z = h/2, h = 0.10 | `run_p5.LADDER` | (30, 15, 6), points per layer | 20 | `e22_settings` |
 
 For the L-bracket a quadrature grid (n_L, n_W, n_T) counts points per unit length along each arm, across
@@ -127,9 +128,13 @@ budget and input normalization), `e20r_b4` (fourfold Monte Carlo sample), `e21lb
 `e21lb_exact_g1` (L-bracket, family redrawn at every iteration), `e21lb_exact_dense` (L-bracket,
 denser family with audit grid (30, 15, 12)), `e21lb_exact_mc1` (L-bracket, uniform Monte Carlo points
 redrawn at every iteration), `e21lb_exact_hires` (L-bracket, high-resolution family with audit grid
-(48, 24, 20)), `e22bi_*` (two-layer block). Supervised fits of the L-bracket are in
+(48, 24, 20)), `e21lb_exact_mc1_norm` and `e21lb_exact_norm` (L-bracket, input normalization with
+uniform Monte Carlo points redrawn at every iteration and with the Gauss family), `e22bi_*`
+(two-layer block). Supervised fits of the L-bracket are in
 `p5_e1_oracle_fit_e21f_m{6,8}.csv`, the post hoc exploitation analyses in `p5_exploit_*.csv` (the
-membrane, bending and out-of-plane split in `p5_exploit_strain_e21.csv`), and the
+membrane, bending and out-of-plane split in `p5_exploit_strain_e21.csv`; for the input-normalization
+runs, the stage-6 shapes against FEM modes 1–8 in `p5_exploit_e21g_mode6_mac.csv` and the split in
+`p5_exploit_strain_e21g.csv`), and the
 mode atlases of the L-bracket and the two-layer block in `p5_mode_{shapes,atlas}_<structure>.*`.
 Trained network parameters (about 60 MB per run) are not included. The post hoc analyses of
 `p5_exploit` and the projection step of the supervised fits re-read them, so their outputs are

@@ -765,7 +765,9 @@ def grid_v2(outdir=None, tau: float | None = None, arms=None, width: int = 128,
             pair_scoring: bool = False, mc_points: int | None = None,
             mc_resample_every: int = 1, storage: str = "raw",
             batch_diag: bool = False, ref_level=None,
-            resample_every: int | None = None, ladder_chunk: int | None = None) -> dict:
+            resample_every: int | None = None, ladder_chunk: int | None = None,
+            stage_from: dict | None = None, checkpoint_every: int | None = None,
+            save_hist: bool = False) -> dict:
     """§5 본실험 — 훈련은 재표집 격자, 게이트·채점은 감사 격자.
 
     `pair_scoring`은 축퇴쌍이 있는 구조를 위한 군집 단위 정합이다(`match_clustered`). 끄면
@@ -778,7 +780,12 @@ def grid_v2(outdir=None, tau: float | None = None, arms=None, width: int = 128,
     저장 스팬 비대각 계측을 정한다. 모두 기본값이면 커밋된 동작과 같다.
 
     `control`은 §5의 고정격자 대조군이다: arm (b)를 **훈련도 감사 격자에서** 돌려
-    재표집 효과 자체를 결과로 남긴다."""
+    재표집 효과 자체를 결과로 남긴다.
+
+    E21h: `stage_from`(npz·tag·arm·cond·n_stored·width·depth·iters)을 주면 앞 `n_stored`개 모드를 그 실행이
+    저장한 망으로 두고(`solve_p5_neural(stored=)`) 새 단계만 학습·기록한다 — 행·기록·곁가지·스팬 진단은 새
+    단계뿐이고, 망 파라미터는 전 모드다. `checkpoint_every`는 새 단계의 중간 망을 `p5_params_<tag>_ckpt.npz`에,
+    `save_hist`는 새 단계의 감사 격자 Λ 이력을 `p5_hist_<tag>.npz`에 남긴다. 셋 다 기본값이면 커밋된 동작이다."""
     import math
 
     import numpy as np
@@ -823,12 +830,34 @@ def grid_v2(outdir=None, tau: float | None = None, arms=None, width: int = 128,
     if control:
         plan.append(("exact", None, "fixed_audit"))
 
+    stored_ens, first = None, 1
+    if stage_from is not None:
+        if control:
+            raise ValueError("stage_from은 재표집 조건만 다룬다(control=False)")
+        import torch as _torch
+        from .p5_exploit import load_ensembles
+        stored_ens = load_ensembles(
+            stage_from["npz"], stage_from["arm"], stage_from["cond"],
+            n_modes=int(stage_from["n_stored"]), n_seeds=n_seeds, width=int(stage_from["width"]),
+            depth=int(stage_from["depth"]),
+            device=device or ("cuda" if _torch.cuda.is_available() else "cpu"))
+        first = int(stage_from["n_stored"]) + 1
+
     part_rows, part_recs = [], []        # 곁가지 누적 — arm을 가로질러 산다
     ps_rows = []                         # 시드별 스팬 진단(별도 파일, 스키마 불변)
     for arm, resample, cond in plan:
         writer = make_mode_writer(d, tag, condition=cond, ref=ref, tau=tau,
                                   shapes_ref=shapes_ref, audit=audit, width=width,
                                   depth=depth, rows=part_rows, recs=part_recs)
+        ckpt = None
+        if checkpoint_every:
+            ck_store = {}
+
+            def ckpt(info, arm=arm, cond=cond, store=ck_store):
+                # E21h 곁가지 — 새 단계의 중간 망. 쌓인 것을 매번 다시 써 정전에도 남는다.
+                for name, v in info["params"].items():
+                    store[f"{arm}_{cond}_m{info['mode']}_it{info['it']}_{name}"] = v
+                np.savez_compressed(os.path.join(d, f"p5_params_{tag}_ckpt.npz"), **store)
         out = p5n.solve_p5_neural(
             n_modes=n_modes, n_seeds=n_seeds, iters=iters, width=width,
             depth=depth, projection=arm, device=device,
@@ -845,9 +874,12 @@ def grid_v2(outdir=None, tau: float | None = None, arms=None, width: int = 128,
             return_params=save_params, normalize_input=normalize_input,
             mc_points=mc_points if resample else None,
             storage=storage if resample else "raw",
-            batch_diag=batch_diag and resample is not None, ladder_chunk=ladder_chunk)
+            batch_diag=batch_diag and resample is not None, ladder_chunk=ladder_chunk,
+            stored=stored_ens,
+            stored_iters=None if stage_from is None else int(stage_from["iters"]),
+            on_checkpoint=ckpt, checkpoint_every=checkpoint_every)
         w = out["w"]
-        for m in range(1, n_modes + 1):
+        for m in range(first, n_modes + 1):
             target = ref[m]["lam_star"]
             cnt = {k: 0 for k in OUTCOMES_V2}
             for s in range(n_seeds):
@@ -921,7 +953,7 @@ def grid_v2(outdir=None, tau: float | None = None, arms=None, width: int = 128,
                   f"basin {cnt['lower_mode_basin']}  spur {cnt['spurious']}  "
                   f"nc {cnt['non_converged']}", flush=True)
         for m, sd in enumerate(out["span_diagnostics"], start=1):
-            if sd is None:
+            if sd is None or m < first:
                 continue
             ps = sd.pop("per_seed", None)
             diag.append({"arm": out["arm"], "condition": cond, "stage_mode": m,
@@ -942,6 +974,10 @@ def grid_v2(outdir=None, tau: float | None = None, arms=None, width: int = 128,
                 os.path.join(d, f"p5_params_{tag}.npz"),
                 **{f"{arm}_{cond}_m{m + 1}_{k}": v
                    for m, pm in enumerate(out["params"]) for k, v in pm.items()})
+        if save_hist:
+            np.savez_compressed(os.path.join(d, f"p5_hist_{tag}.npz"), snapshot_every=snap,
+                                **{f"{arm}_{cond}_m{m}": np.asarray(out["hist"][m - 1])
+                                   for m in range(first, n_modes + 1)})
         print(f"[p5 v2] {arm}/{cond} 저장 완료 — 누적 {len(rows)}행", flush=True)
         writer.finish()
 
@@ -968,6 +1004,9 @@ def grid_v2(outdir=None, tau: float | None = None, arms=None, width: int = 128,
         "pair_scoring": bool(pair_scoring), "clusters": [list(c) for c in clusters],
         "mc_points": mc_points, "mc_resample_every": mc_resample_every if mc_points else None,
         "storage": storage, "batch_diag": bool(batch_diag), "ladder_chunk": ladder_chunk,
+        "stage_from": (None if stage_from is None else
+                       {**stage_from, "npz": os.path.basename(stage_from["npz"])}),
+        "checkpoint_every": checkpoint_every, "save_hist": bool(save_hist),
         "fixed_train_grid": (None if fixed_train_grid is None
                              else list(fixed_train_grid)),
         "arms": list(arms), "control": bool(control), "n_modes": n_modes,
@@ -1424,6 +1463,48 @@ def e21g_run(arm: str, outdir=None, device=None) -> dict:
         raise FileNotFoundError(f"{p}가 없다 — E21 τ 보정이 먼저다")
     tau = float(json.load(open(p, encoding="utf-8"))["tau"])
     return grid_v2(outdir=d, device=device, tau=tau, **e21g_settings(arm))
+
+
+# ── E21h (사전규정 2026-10-14-p5-e21h-prespecification.md) ─────────────────────
+# E21d(원좌표)와 E21g-mc(정규화)의 모드 6 단계는 비틀림 모드 6에 이르지 못했다(시행공간은 모드 6을 담는다, E21f).
+# 남은 두 후보를 모드 6 단계만 다시 풀어 시험한다 — 앞 모드 1–5는 그 실행이 저장한 망 그대로다(`grid_v2(stage_from=)`,
+# 초기화·MC 표본 순서·사영이 순차 풀이와 같다). 일정 조건은 반복만 4배(StepLR 주기도 4배), 폭 조건은 새 단계의 폭만 256.
+E21H_TAGS = {"sched_norm": "e21lb_s6_norm_x4", "sched_raw": "e21lb_s6_raw_x4",
+             "wide_norm": "e21lb_s6_norm_w256"}
+E21H_ITERS = 4 * GRID_ITERS
+E21H_WIDTH = 256
+E21H_CKPT_EVERY = 20_000
+
+
+def e21h_settings(cond: str) -> dict:
+    if cond not in E21H_TAGS:
+        raise ValueError(f"E21h 조건은 {sorted(E21H_TAGS)} 중 하나여야 합니다: {cond!r}")
+    base = e21d_settings() if cond == "sched_raw" else e21g_settings("mc")
+    k = {**base, "tag": E21H_TAGS[cond], "save_hist": True,
+         "stage_from": {"npz": os.path.join(manifest.P5_OUTDIR, f"p5_params_{base['tag']}.npz"),
+                        "tag": base["tag"], "arm": "exact", "cond": "mc", "n_stored": 5,
+                        "width": 128, "depth": 5, "iters": GRID_ITERS}}
+    if cond.startswith("sched"):
+        k.update({"iters": E21H_ITERS, "checkpoint_every": E21H_CKPT_EVERY})
+    else:
+        k["width"] = E21H_WIDTH
+    return k
+
+
+def e21h_run(cond: str, outdir=None, device=None) -> dict:
+    """E21h 조건 하나. τ는 E21의 것을 읽고, 앞 모드 1–5의 저장된 망이 없으면 거부한다."""
+    import json
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    p = os.path.join(d, f"manifest_p5_tau_{E21_TAU_TAG}.json")
+    if not os.path.exists(p):
+        raise FileNotFoundError(f"{p}가 없다 — E21 τ 보정이 먼저다")
+    tau = float(json.load(open(p, encoding="utf-8"))["tau"])
+    k = e21h_settings(cond)
+    npz = os.path.join(d, os.path.basename(k["stage_from"]["npz"]))
+    if not os.path.exists(npz):
+        raise FileNotFoundError(f"{npz}가 없다 — 앞 모드의 저장된 망이 먼저다")
+    k["stage_from"] = {**k["stage_from"], "npz": npz}
+    return grid_v2(outdir=d, device=device, tau=tau, **k)
 
 # ── E21e (사전규정 2026-10-09-p5-e21e-prespecification.md) ─────────────────────
 # E21c는 기준 구조의 밀도(팔의 단위 길이당 16–20점)로 모드 3만 고쳤다. 기준 구조에서 깊은 모드를 살린

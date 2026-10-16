@@ -3,7 +3,11 @@
 def test_head_sha_is_found_even_without_the_git_executable(monkeypatch):
     """GPU 컨테이너에는 git이 없어 manifest에 'unknown'이 남았다 — 표 캡션이 그 sha를
     인용하므로 추적선이 끊긴다. .git을 직접 읽는 폴백을 회귀로 지킨다."""
+    import os
+    import pytest
     from eigen_benchmark.drivers import manifest as mf
+    if not os.path.isdir(os.path.join(mf._root(), ".git")):
+        pytest.skip("저장소(.git)가 없는 배포본(압축 내려받기·보관본) — .git을 읽는 폴백을 잴 대상이 없다")
     monkeypatch.setattr(mf, "_git", lambda *a: "unknown")
     sha = mf._head_sha()
     assert sha != "unknown" and len(sha) == 40 and all(

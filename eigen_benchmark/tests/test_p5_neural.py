@@ -822,3 +822,82 @@ def test_chunked_ladder_releases_the_allocator_cache_before_and_between_rungs(mo
     assert calls == []
     p5n.solve_p5_neural(**kw, ladder_chunk=50)
     assert len(calls) == 3                      # 사다리 직전 1 + 칸마다 1
+
+
+# ── E21h: 저장된 망에서 단계를 시작한다(2026-10-14) ─────────────────────────────────
+
+G_LB = {"kind": "L", "L": 1.0, "b": 0.2, "h": 0.1, "a": 0.5, "E": 1.0, "rho": 1.0, "nu": 0.29}
+
+
+def _stored(out, n, width, depth, n_seeds=2):
+    """순차 풀이가 돌려준 망 파라미터로 앞 n개 모드의 앙상블을 되살린다."""
+    ens = []
+    for m in range(n):
+        e = p5n.EnsembleVecMLP3D(n_seeds, width, depth, seed=0, device="cpu")
+        for k_, v in out["params"][m].items():
+            e.params[k_] = torch.as_tensor(v)
+        ens.append(e)
+    return ens
+
+
+@pytest.mark.parametrize("kw", [
+    dict(mc_points=40, resample_every=1),
+    dict(resample_every=3, family_axes=((4, 5), (2, 3), (2,))),
+    dict(mc_points=40, resample_every=1, normalize_input=True),
+])
+def test_a_stage_started_from_stored_networks_is_the_sequential_stage(kw):
+    """E21h — 앞 모드를 학습하지 않고 저장된 망으로 두면 그 단계들이 뽑던 표본만큼 난수를 넘긴다. 그러면 다음 단계의
+    초기화·표본 순서·사영이 순차 풀이와 같다. 새 단계의 모든 출력과 저장 단계의 감사 격자 값이 같아야 한다."""
+    base = dict(n_modes=3, n_seeds=2, iters=8, width=8, depth=2, device="cpu", geometry=G_LB,
+                audit_grid=(6, 4, 3), snapshot_every=2, projection="exact", **kw)
+    seq = p5n.solve_p5_neural(**base, return_params=True)
+    st = p5n.solve_p5_neural(**base, stored=_stored(seq, 2, 8, 2), stored_iters=8)
+    for key in ("lam", "lam_train", "projected_mass_fraction"):
+        np.testing.assert_array_equal(st[key], seq[key])
+    for a, b in zip(st["shapes"], seq["shapes"]):
+        np.testing.assert_array_equal(a, b)
+    np.testing.assert_array_equal(st["hist"][2], seq["hist"][2])
+    assert st["hist"][0].size == 0 and st["hist"][1].size == 0      # 저장 단계는 학습하지 않는다
+    assert st["n_stored"] == 2 and seq["n_stored"] == 0
+
+
+def test_stored_networks_need_their_iterations_matching_seeds_and_a_stage_left():
+    one = [p5n.EnsembleVecMLP3D(2, 8, 2, seed=0, device="cpu")]
+    kw = dict(n_seeds=2, iters=4, width=8, depth=2, device="cpu")
+    with pytest.raises(ValueError):                 # 표본 순서를 넘기려면 그 단계의 반복 수가 필요하다
+        p5n.solve_p5_neural(n_modes=2, stored=one, **kw)
+    with pytest.raises(ValueError):                 # 시드 수가 다르면 짝이 깨진다
+        p5n.solve_p5_neural(n_modes=2, stored=[p5n.EnsembleVecMLP3D(3, 8, 2, seed=0, device="cpu")],
+                            stored_iters=4, **kw)
+    with pytest.raises(ValueError):                 # 풀 단계가 남지 않는다
+        p5n.solve_p5_neural(n_modes=1, stored=one, stored_iters=4, **kw)
+    with pytest.raises(ValueError):                 # 직교화 저장의 계수는 저장 단계에서 다루지 않는다
+        p5n.solve_p5_neural(n_modes=2, stored=one, stored_iters=4, storage="orthogonalized", **kw)
+
+
+def test_the_new_stage_may_be_wider_than_the_stored_ones():
+    """E21h 폭 조건 — 저장된 망은 제 폭(8) 그대로, 새 단계만 요청한 폭(16)이다. 중간 망은 새 단계에서만 나온다."""
+    base = dict(n_modes=2, n_seeds=2, iters=4, depth=2, device="cpu", geometry=G_LB,
+                audit_grid=(6, 4, 3), snapshot_every=2, mc_points=30, resample_every=1)
+    seq = p5n.solve_p5_neural(**base, width=8, return_params=True)
+    seen = []
+    st = p5n.solve_p5_neural(**base, width=16, stored=_stored(seq, 1, 8, 2), stored_iters=4,
+                             return_params=True, on_checkpoint=seen.append, checkpoint_every=2)
+    np.testing.assert_array_equal(st["lam"][:, 0], seq["lam"][:, 0])
+    assert st["width"] == 16
+    assert st["params"][0]["net.0.weight"].shape == (2, 8, 3)
+    assert st["params"][1]["net.0.weight"].shape == (2, 16, 3)
+    assert [(c["mode"], c["it"]) for c in seen] == [(2, 2)]
+
+
+def test_checkpoints_report_the_parameters_without_touching_the_path():
+    """E21h 곁가지 — 콜백은 학습 중인 단계의 파라미터 사본만 받고 결과는 그대로다. 마지막 반복은 보내지 않는다."""
+    kw = dict(n_modes=2, projection="exact", **TINY)
+    a = p5n.solve_p5_neural(**kw)
+    seen = []
+    b = p5n.solve_p5_neural(**kw, on_checkpoint=seen.append, checkpoint_every=2)
+    np.testing.assert_array_equal(a["lam"], b["lam"])
+    for x, y in zip(a["shapes"], b["shapes"]):
+        np.testing.assert_array_equal(x, y)
+    assert [(c["mode"], c["it"]) for c in seen] == [(1, 2), (1, 4), (2, 2), (2, 4)]
+    assert all(isinstance(v, np.ndarray) for c in seen for v in c["params"].values())

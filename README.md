@@ -24,12 +24,14 @@ eigen_benchmark/
   neural/deflation.py,      exact projection and W-orthonormalization used by the span
   neural/diagnostics.py       diagnostics
   drivers/run_p5.py         FEM references, cluster (degenerate-pair) detection, mode atlas
-  drivers/run_p5_neural.py  experiment drivers: tau calibration, main grid, follow-ups
+  drivers/run_p5_neural.py  experiment drivers: tau calibration, main grid, follow-ups, re-solving
+                            one stage from stored networks
   drivers/p5_stats.py       every interval and test reported, recomputed from committed records
   drivers/p5_exploit.py     post hoc re-evaluation of stored networks: where the training grid misses
                             energy (by block and along the arms), its membrane, bending and
                             out-of-plane parts, stage shapes against FEM modes; networks trained
-                            on normalized coordinates are re-evaluated with the same scale
+                            on normalized coordinates are re-evaluated with the same scale, and
+                            stages are read one at a time (own width, intermediate networks)
   drivers/manifest.py       provenance (environment, git SHA at launch and at write time)
   render/figures_p5.py      figures, drawn from committed artifacts only (no FEM solve)
   quadrature.py, metrics.py shared numerics: Gauss-Legendre rules, MAC and classification
@@ -96,7 +98,7 @@ own settings in the same module:
 | Structure | Geometry | Reference ladder | Audit grid | τ | Settings |
 |---|---|---|---|---|---|
 | near-degenerate section | b = 0.105, h = 0.10 | as the square section | (30, 14, 14) | 0.5 | `followup_settings("e18_*")` |
-| L-bracket | arm 1 [0, 1] × [0, 0.2], arm 2 [0.8, 1] × [0.2, 0.7], h = 0.1 | `run_p5.L_LADDER` | (24, 12, 12) | 10 | `e21_settings`, `e21b_settings`–`e21g_settings` |
+| L-bracket | arm 1 [0, 1] × [0, 0.2], arm 2 [0.8, 1] × [0.2, 0.7], h = 0.1 | `run_p5.L_LADDER` | (24, 12, 12) | 10 | `e21_settings`, `e21b_settings`–`e21h_settings` |
 | two-layer block | E = 1 below and 0.1 above z = h/2, h = 0.10 | `run_p5.LADDER` | (30, 15, 6), points per layer | 20 | `e22_settings` |
 
 For the L-bracket a quadrature grid (n_L, n_W, n_T) counts points per unit length along each arm, across
@@ -109,6 +111,11 @@ When the top ladder rung would not fit in node memory, the ladder is measured in
 (`ladder_chunk`); point-wise states are independent, so the ladder is the same.
 `oracle_fit` (the supervised-fit control) takes another structure's reference, held-out check grids
 and the stored modes of another run to project against (`e21f_settings`).
+`grid_v2(stage_from=)` keeps the earlier modes as the networks stored by another run and re-solves
+only the later stages (`solve_p5_neural(stored=)`). The random stream is advanced by the samples the
+stored stages drew, so the new stage starts exactly as it did in the sequential run (`e21h_settings`:
+a fourfold schedule, or width 256). `checkpoint_every=` writes intermediate networks of the new stage
+and `save_hist=` its audit-grid Λ history (`p5_hist_<tag>.npz`).
 
 ## Committed artifacts
 
@@ -119,6 +126,7 @@ and the stored modes of another run to project against (`e21f_settings`).
 - `p5_neural_<tag>.csv`: per-mode summary rows; `*_partial*` files are per-mode checkpoints
 - `p5_span_per_seed_<tag>.csv`, `p5_span_diagnostics_<tag>.csv`: stored-span Gram diagnostics
 - `manifest_p5_neural_<tag>.json`: environment, settings and provenance of the run
+- `p5_hist_<tag>.npz`: audit-grid Λ of a re-solved stage every 25 iterations (re-solve runs only)
 - `p5_reference*.{csv,json}`: FEM references; `p5_stats.json`: every reported interval and test
 
 Run tags: `v2` (main grid), `e2_*`–`e14*` (follow-up experiments), `e15r`/`e15b` (storage
@@ -129,14 +137,20 @@ budget and input normalization), `e20r_b4` (fourfold Monte Carlo sample), `e21lb
 denser family with audit grid (30, 15, 12)), `e21lb_exact_mc1` (L-bracket, uniform Monte Carlo points
 redrawn at every iteration), `e21lb_exact_hires` (L-bracket, high-resolution family with audit grid
 (48, 24, 20)), `e21lb_exact_mc1_norm` and `e21lb_exact_norm` (L-bracket, input normalization with
-uniform Monte Carlo points redrawn at every iteration and with the Gauss family), `e22bi_*`
+uniform Monte Carlo points redrawn at every iteration and with the Gauss family),
+`e21lb_s6_norm_x4`, `e21lb_s6_raw_x4` and `e21lb_s6_norm_w256` (L-bracket, only the mode-6 stage
+re-solved from the stored networks of `e21lb_exact_mc1_norm` or `e21lb_exact_mc1`: a fourfold
+schedule with and without input normalization, and width 256 with normalization), `e22bi_*`
 (two-layer block). Supervised fits of the L-bracket are in
 `p5_e1_oracle_fit_e21f_m{6,8}.csv`, the post hoc exploitation analyses in `p5_exploit_*.csv` (the
 membrane, bending and out-of-plane split in `p5_exploit_strain_e21.csv`; for the input-normalization
 runs, the stage-6 shapes against FEM modes 1–8 in `p5_exploit_e21g_mode6_mac.csv` and the split in
-`p5_exploit_strain_e21g.csv`), and the
+`p5_exploit_strain_e21g.csv`; for the re-solved stage-6 runs, the shapes of the final and intermediate
+networks against FEM modes 1–8 in `p5_exploit_e21h_mode6.csv` and a summary of the Λ histories in
+`p5_exploit_e21h_hist.csv`), and the
 mode atlases of the L-bracket and the two-layer block in `p5_mode_{shapes,atlas}_<structure>.*`.
-Trained network parameters (about 60 MB per run) are not included. The post hoc analyses of
+Trained network parameters (about 60 MB per run) and the intermediate networks of the re-solved
+stages are not included. The post hoc analyses of
 `p5_exploit` and the projection step of the supervised fits re-read them, so their outputs are
 committed here but cannot be regenerated from this repository alone.
 

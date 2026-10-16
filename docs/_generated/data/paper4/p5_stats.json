@@ -1374,6 +1374,45 @@
       }
     }
   },
+  "e21h": {
+    "primary": "sched_norm",
+    "sched_norm": {
+      "contrast": [
+        0.95,
+        0.85,
+        1.0
+      ],
+      "verdict": "rule1",
+      "acc_6": {
+        "e21lb_s6_norm_x4": 20,
+        "e21lb_exact_mc1_norm": 1
+      }
+    },
+    "sched_raw": {
+      "contrast": [
+        0.6,
+        0.4,
+        0.8
+      ],
+      "verdict": "rule1",
+      "acc_6": {
+        "e21lb_s6_raw_x4": 12,
+        "e21lb_exact_mc1": 0
+      }
+    },
+    "wide_norm": {
+      "contrast": [
+        -0.05,
+        -0.15,
+        0.0
+      ],
+      "verdict": "rule2",
+      "acc_6": {
+        "e21lb_s6_norm_w256": 0,
+        "e21lb_exact_mc1_norm": 1
+      }
+    }
+  },
   "e22": {
     "correct_by_mode": {
       "diagonal": {

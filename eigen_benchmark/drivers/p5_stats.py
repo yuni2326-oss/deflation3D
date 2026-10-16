@@ -945,6 +945,37 @@ def e21g(data_dir: str = DATA_DIR) -> dict | None:
         return None
     return e21g_from_records(recs["mc"], mc, recs["gauss"], ex)
 
+
+# E21h — L-브래킷 모드 6 단계의 학습 일정과 망 폭(사전규정 2026-10-14-p5-e21h-prespecification.md). 새 실행은
+# 앞 모드 1–5를 저장된 망으로 두고 모드 6 단계만 다시 풀었으므로 기록은 모드 6뿐이다.
+E21H_TAGS = {"sched_norm": "e21lb_s6_norm_x4", "sched_raw": "e21lb_s6_raw_x4",
+             "wide_norm": "e21lb_s6_norm_w256"}
+E21H_BASE = {"sched_norm": E21G_TAGS["mc"], "sched_raw": E21D_TAG, "wide_norm": E21G_TAGS["mc"]}
+
+
+def e21h_from_records(recs_sched_norm, recs_e21g_mc, recs_sched_raw, recs_e21d, recs_wide_norm,
+                      B: int = B_DEFAULT, seed: int = SEED) -> dict:
+    """세 대비 모두 모드 6의 게이트 없는 정확 — 새 조건 대 그 조건이 앞 모드를 가져온 실행, 시드 짝지음.
+    주 판정은 `sched_norm`(정규화, 반복 4배 대 E21g-mc)이고 나머지 둘은 보조 판정이다."""
+    def c6(new, base, cond):
+        a, b = _seed_share(new, accurate, (6,)), _seed_share(base, accurate, (6,))
+        ci = paired_bootstrap(a, b, B, seed)
+        return {"contrast": ci, "verdict": _rule(ci),
+                "acc_6": {E21H_TAGS[cond]: _n_acc(new, (6,)), E21H_BASE[cond]: _n_acc(base, (6,))}}
+    return {"primary": "sched_norm",
+            "sched_norm": c6(recs_sched_norm, recs_e21g_mc, "sched_norm"),
+            "sched_raw": c6(recs_sched_raw, recs_e21d, "sched_raw"),
+            "wide_norm": c6(recs_wide_norm, recs_e21g_mc, "wide_norm")}
+
+
+def e21h(data_dir: str = DATA_DIR) -> dict | None:
+    try:
+        recs = {k: load(data_dir, t) for k, t in E21H_TAGS.items()}
+        g_mc, d_mc = load(data_dir, E21G_TAGS["mc"]), load(data_dir, E21D_TAG)
+    except FileNotFoundError:
+        return None
+    return e21h_from_records(recs["sched_norm"], g_mc, recs["sched_raw"], d_mc, recs["wide_norm"])
+
 def e21b(data_dir: str = DATA_DIR) -> dict | None:
     try:
         g1, ex = load(data_dir, E21B_TAG), load(data_dir, E21_TAGS["exact"])
@@ -1014,7 +1045,7 @@ def main(data_dir: str = DATA_DIR, outdir: str | None = None) -> dict:
            "e17": e17(data_dir), "e18": e18(data_dir), "e19": e19(data_dir), "e20": e20(data_dir),
            "e21": e21(data_dir), "e21b": e21b(data_dir), "e21c": e21c(data_dir),
            "e21d": e21d(data_dir), "e21e": e21e(data_dir), "e21f": e21f(data_dir),
-           "e21g": e21g(data_dir),
+           "e21g": e21g(data_dir), "e21h": e21h(data_dir),
            "e22": e22(data_dir),
            "e14_registered": e14_registered(obs),
            "e14_fixed_effects": e14_fixed_effects(obs),

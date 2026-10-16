@@ -572,3 +572,23 @@ def test_e21g_primary_is_mode_six_under_monte_carlo_and_secondary_the_gauss_arm(
     assert r["gauss_4_6"]["contrast"][0] == pytest.approx(1 / 3)
     assert r["gauss_4_6"]["acc_4_6"] == {"e21lb_exact_norm": 20, "e21lb_exact": 0}
     assert st.e21g_from_records(mc, mc, ex, ex, B=500)["mode6"]["verdict"] == "rule2"
+
+
+def test_e21h_contrasts_mode_six_of_each_condition_with_the_run_it_took_its_modes_from():
+    """사전규정 2026-10-14 E21h — 세 대비 모두 모드 6의 게이트 없는 정확, 시드 짝지음. 주 판정은 정규화·반복 4배
+    대 E21g-mc다. 새 실행의 기록은 모드 6뿐이다."""
+    six = lambda ok: _acc_recs(lambda m, s: s in ok, modes=(6,))
+    base_norm = _acc_recs(lambda m, s: m < 6 or s == 14)      # E21g-mc — 모드 6은 시드 14만
+    base_raw = _acc_recs(lambda m, s: m < 6)                  # E21d — 모드 6은 0
+    r = st.e21h_from_records(six(set(range(12))), base_norm, six(set()), base_raw, six({14}), B=2000)
+    assert r["primary"] == "sched_norm"
+    sn, sr, wn = r["sched_norm"], r["sched_raw"], r["wide_norm"]
+    assert sn["verdict"] == "rule1" and sn["contrast"][0] == pytest.approx(11 / 20)
+    assert sn["acc_6"] == {"e21lb_s6_norm_x4": 12, "e21lb_exact_mc1_norm": 1}
+    assert sr["verdict"] == "rule2" and sr["acc_6"] == {"e21lb_s6_raw_x4": 0, "e21lb_exact_mc1": 0}
+    assert wn["verdict"] == "rule2" and wn["contrast"][0] == 0.0
+    assert wn["acc_6"] == {"e21lb_s6_norm_w256": 1, "e21lb_exact_mc1_norm": 1}
+
+
+def test_e21h_is_absent_until_its_records_exist(tmp_path):
+    assert st.e21h(str(tmp_path)) is None

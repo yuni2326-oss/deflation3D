@@ -1366,3 +1366,83 @@ def test_e21g_run_reads_the_e21_tau_and_refuses_without_it(tmp_path, monkeypatch
     monkeypatch.setattr(run, "grid_v2", lambda **kw: got.update(kw) or {"verdicts": None})
     run.e21g_run("gauss", outdir=str(tmp_path), device="cpu")
     assert got["tau"] == 10.0 and got["tag"] == "e21lb_exact_norm" and got["normalize_input"] is True
+
+
+# ── E21h — L-브래킷 모드 6 단계의 학습 일정과 망 폭 (사전규정 2026-10-14-p5-e21h-prespecification.md) ──
+
+@pytest.mark.skipif(__import__("importlib").util.find_spec("torch") is None,
+                    reason="torch 없음")
+def test_grid_v2_started_from_stored_modes_records_only_the_new_stage(tmp_path):
+    """`stage_from`은 앞 모드를 저장된 망으로 두고 새 단계만 학습·기록한다. 같은 설정의 순차 실행과 새 단계의
+    기록이 같아야 하고(초기화·MC 표본 순서·사영이 같다), 이력·중간 망이 따로 남는다."""
+    import json
+    import numpy as np
+    from eigen_benchmark.drivers import run_p5
+    g = {"kind": "L", "L": 1.0, "b": 0.2, "h": 0.1, "a": 0.5, "E": 1.0, "rho": 1.0, "nu": 0.29}
+    d = str(tmp_path)
+    run_p5.structure_reference("lq", g, ladder=[(10, 2, 1), (20, 4, 2), (40, 8, 4)],
+                               n_modes=6, cert_grid=(16, 8, 6), outdir=d)
+    kw = dict(outdir=d, quick=True, arms=("exact",), control=False, device="cpu", tau=5.0,
+              geometry=g, ref_name="p5_reference_lq", ref_level=(40, 8, 4), audit_grid=(16, 8, 6),
+              check_grid=(20, 10, 8), mc_points=30, mc_resample_every=1, save_params=True,
+              pair_scoring=True)          # 참조 형상을 고정 시작벡터로 — 두 호출의 채점이 같은 참조를 본다
+    run.grid_v2(**kw, tag="lq")
+    sf = {"npz": f"{d}/p5_params_lq.npz", "tag": "lq", "arm": "exact", "cond": "mc", "n_stored": 1,
+          "width": 16, "depth": 2, "iters": 20}
+    run.grid_v2(**kw, tag="lq_s2", stage_from=sf, checkpoint_every=10, save_hist=True)
+    load = lambda t: [json.loads(x) for x in open(f"{d}/p5_neural_{t}_records.jsonl", encoding="utf-8")]
+    seq, new = load("lq"), load("lq_s2")
+    assert {r["mode"] for r in new} == {2}
+    pick = lambda rs: sorted((r["seed"], r["Lam"], r["Lam_train"], r["mac"], r["outcome"])
+                             for r in rs if r["mode"] == 2)
+    assert pick(new) == pick(seq)
+    rows = [r for r in open(f"{d}/p5_neural_lq_s2.csv", encoding="utf-8")][1:]
+    assert len(rows) == 1
+    part = [json.loads(x) for x in open(f"{d}/p5_neural_lq_s2_partial_records.jsonl", encoding="utf-8")]
+    assert {r["mode"] for r in part} == {2}
+    z = np.load(f"{d}/p5_params_lq_s2.npz")
+    assert {k.split("_")[2] for k in z.files} == {"m1", "m2"}
+    h = np.load(f"{d}/p5_hist_lq_s2.npz")
+    assert h["exact_mc_m2"].shape == (11, 2) and int(h["snapshot_every"]) == 2
+    c = np.load(f"{d}/p5_params_lq_s2_ckpt.npz")
+    assert {k.split("_")[3] for k in c.files} == {"it10"} and {k.split("_")[2] for k in c.files} == {"m2"}
+    man = json.load(open(f"{d}/manifest_p5_neural_lq_s2.json", encoding="utf-8"))
+    assert man["stage_from"]["tag"] == "lq" and man["stage_from"]["n_stored"] == 1
+    assert man["stage_from"]["npz"] == "p5_params_lq.npz" and man["checkpoint_every"] == 10
+
+
+def test_e21h_changes_only_the_stage_six_factor():
+    """모드 1–5는 저장된 망(정규화 = E21g-mc, 원좌표 = E21d), 모드 6 단계만 다시 푼다. 일정 조건은 반복만 4배
+    (StepLR은 같은 비율), 폭 조건은 새 단계의 폭만 256이다."""
+    extra = ("tag", "iters", "width", "stage_from", "checkpoint_every", "save_hist")
+    drop = lambda d: {k: v for k, v in d.items() if k not in extra}
+    sn, sr, wn = (run.e21h_settings(c) for c in ("sched_norm", "sched_raw", "wide_norm"))
+    assert drop(sn) == drop(run.e21g_settings("mc")) and drop(wn) == drop(run.e21g_settings("mc"))
+    assert drop(sr) == drop(run.e21d_settings())
+    assert (sn["tag"], sr["tag"], wn["tag"]) == ("e21lb_s6_norm_x4", "e21lb_s6_raw_x4", "e21lb_s6_norm_w256")
+    assert sn["iters"] == sr["iters"] == 4 * run.GRID_ITERS and "iters" not in wn
+    assert wn["width"] == 256 and "width" not in sn and "width" not in sr
+    assert sn["checkpoint_every"] == sr["checkpoint_every"] == 20_000 and "checkpoint_every" not in wn
+    for k, src in ((sn, "e21lb_exact_mc1_norm"), (sr, "e21lb_exact_mc1"), (wn, "e21lb_exact_mc1_norm")):
+        f = k["stage_from"]
+        assert f["tag"] == src and f["npz"].endswith(f"p5_params_{src}.npz")
+        assert (f["arm"], f["cond"], f["n_stored"], f["width"], f["depth"], f["iters"]) == (
+            "exact", "mc", 5, 128, 5, run.GRID_ITERS)
+        assert k["save_hist"] is True
+    with pytest.raises(ValueError):
+        run.e21h_settings("deep")
+
+
+def test_e21h_run_reads_the_e21_tau_and_refuses_without_the_stored_networks(tmp_path, monkeypatch):
+    import json
+    with pytest.raises(FileNotFoundError):
+        run.e21h_run("sched_norm", outdir=str(tmp_path))
+    (tmp_path / "manifest_p5_tau_e21_lbracket.json").write_text(json.dumps({"tau": 10.0}))
+    got = {}
+    monkeypatch.setattr(run, "grid_v2", lambda **kw: got.update(kw) or {"verdicts": None})
+    with pytest.raises(FileNotFoundError):
+        run.e21h_run("sched_raw", outdir=str(tmp_path), device="cpu")
+    (tmp_path / "p5_params_e21lb_exact_mc1.npz").write_bytes(b"")
+    run.e21h_run("sched_raw", outdir=str(tmp_path), device="cpu")
+    assert got["tau"] == 10.0 and got["tag"] == "e21lb_s6_raw_x4" and got["iters"] == 80_000
+    assert got["stage_from"]["npz"] == str(tmp_path / "p5_params_e21lb_exact_mc1.npz")

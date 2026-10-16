@@ -389,7 +389,9 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
                     normalize_input: bool = False,
                     bc: str = "clamped_x0", mc_points: int | None = None,
                     storage: str = "raw", batch_diag: bool = False,
-                    ladder_chunk: int | None = None) -> dict:
+                    ladder_chunk: int | None = None, stored=None,
+                    stored_iters: int | None = None, on_checkpoint=None,
+                    checkpoint_every: int | None = None) -> dict:
     """3D 블록의 최저 n_modes개 Λ를 순차 Rayleigh 최소화로 푼다.
 
     `projection`은 P1·P4와 같은 세 규칙이다. P5가 묻는 것은 raw 저장 스팬이 질량-직교
@@ -419,11 +421,28 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
 
     `ladder_chunk`(E21e)는 사다리 칸의 원시 상태를 점 묶음 단위로 재어 이어 붙인다. 점마다의 상태는
     점끼리 독립이라 같은 사다리이며, 최상단이 GB10 메모리를 넘는 격자에서만 쓴다. 기본값 None이면
-    커밋된 경로 그대로다."""
+    커밋된 경로 그대로다.
+
+    `stored`(E21h)는 앞 모드들을 학습하지 않고 주어진 앙상블(다른 실행이 저장한 망)로 둔다. 그 단계들은
+    `stored_iters`회 학습할 때 뽑았을 표본만큼 재표집 난수만 넘기므로, 다음 단계의 초기화(스테이지마다 다시
+    심는 시드)·표본 순서·사영이 순차 풀이와 같다(시험). 저장 단계의 감사 격자 값·형상도 순차 풀이와 같게 다시
+    잰다. 새 단계는 `width`·`depth`를 따르고 저장된 망은 제 크기 그대로다. `on_checkpoint`는 곁가지다 —
+    학습 중인 단계에서 `checkpoint_every`회마다(마지막 반복 제외) 파라미터의 호스트 사본만 넘긴다. 셋 다
+    기본값이면 커밋된 경로 그대로다."""
     if storage not in STORAGE:
         raise ValueError(f"storage는 {STORAGE} 중 하나여야 합니다: {storage!r}")
     if mc_points and not resample_every:
         raise ValueError("mc_points는 resample_every와 함께 써야 한다(표본을 언제 바꿀지)")
+    n_stored = 0 if stored is None else len(stored)
+    if n_stored:
+        if stored_iters is None:
+            raise ValueError("stored에는 stored_iters가 필요하다(그 단계들이 뽑던 표본만큼 난수를 넘긴다)")
+        if n_stored >= n_modes:
+            raise ValueError(f"저장 단계 {n_stored}개로는 풀 단계가 남지 않는다(n_modes={n_modes})")
+        if any(int(e.n_seeds) != int(n_seeds) for e in stored):
+            raise ValueError("저장된 망의 시드 수가 n_seeds와 다르다 — 시드 짝이 깨진다")
+        if storage != "raw":
+            raise ValueError("저장된 망에서 시작하는 단계는 raw 저장만 다룬다")
     arm_label = (ARM_NAME[projection] if storage == "raw"
                  else ARM_NAME[projection][:-1] + ", orthogonalized storage]")
     torch.set_default_dtype(torch.float64)
@@ -482,13 +501,16 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
         return tuple(U)
 
     for k in range(n_modes):
-        ens = EnsembleVecMLP3D(n_seeds, width, depth, seed=seed * 1000 + k,
-                               device=dev)
-        # `stack_module_state`가 돌려주는 텐서를 **그대로** 최적화한다. clone()을 끼우면
-        # non-leaf가 되어 Adam이 거부한다(P4와 같은 처리).
-        opt = torch.optim.Adam(list(ens.params.values()), lr=lr)
-        sched = torch.optim.lr_scheduler.StepLR(
-            opt, step_size=max(iters // 3, 1), gamma=0.4)
+        if k < n_stored:
+            ens = stored[k]          # E21h — 저장된 망, 학습하지 않는다
+        else:
+            ens = EnsembleVecMLP3D(n_seeds, width, depth, seed=seed * 1000 + k,
+                                   device=dev)
+            # `stack_module_state`가 돌려주는 텐서를 **그대로** 최적화한다. clone()을 끼우면
+            # non-leaf가 되어 Adam이 거부한다(P4와 같은 처리).
+            opt = torch.optim.Adam(list(ens.params.values()), lr=lr)
+            sched = torch.optim.lr_scheduler.StepLR(
+                opt, step_size=max(iters // 3, 1), gamma=0.4)
         proj = PROJECTIONS[projection]
 
         def loss_audit(p, *prev):
@@ -516,7 +538,18 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
         E_cur = young_at(cur_pts, g)
         cur_stack = _stack_at(cur_pts, k)
         t0 = time.perf_counter()
-        for it in range(iters + 1):
+        if k < n_stored and resample_every:
+            # E21h — 저장 단계가 `stored_iters`회 학습하며 뽑았을 표본만큼 난수를 넘긴다(아래 학습 루프의
+            # 재표집과 같은 시점들). 마지막 표본은 그 단계의 훈련 격자 Λ를 재는 데 쓴다.
+            for _it in range(0, int(stored_iters), resample_every):
+                if mc_points:
+                    cur_pts, cur_w = mc_quadrature(mc_points, rng, dev, g)
+                else:
+                    cur_pts, cur_w = family[int(rng.integers(len(family)))]
+                grids_used.add(int(len(cur_w)))
+            E_cur = young_at(cur_pts, g)
+            cur_stack = _stack_at(cur_pts, k)
+        for it in (range(iters + 1) if k >= n_stored else ()):
             if resample_every and it % resample_every == 0 and it < iters:
                 # **격자를 갈면 저장 스팬도 그 격자에서 다시 평가해야 한다.**
                 # 옛 격자의 값을 그대로 쓰면 사영이 현재 격자에서 직교를 만들지 못해
@@ -554,6 +587,11 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
                 print(f"[p5 진행] {arm_label} k={k + 1} "
                       f"it={it}/{iters} 경과 {el / 3600:.2f}h "
                       f"ms/iter {el / it * 1000:.1f}", flush=True)
+            if (on_checkpoint is not None and checkpoint_every and it
+                    and it % checkpoint_every == 0 and it < iters):
+                on_checkpoint({"mode": k + 1, "it": it,
+                               "params": {n_: v.detach().cpu().numpy().copy()
+                                          for n_, v in ens.params.items()}})
             if it == iters:
                 break
             opt.zero_grad(set_to_none=True)
@@ -605,7 +643,7 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
                 coefs.append(ck)
                 prevs.append(u.detach())
 
-        if on_mode_done is not None:
+        if on_mode_done is not None and k >= n_stored:
             # 이 모드가 끝난 직후의 상태만 넘긴다. §3.6 구적분리는 모든 모드가 끝난
             # 뒤에 한 번 도는 후처리라 여기서는 아직 없다 — 곁가지 기록에도 없다.
             on_mode_done({"mode": k + 1, "arm": arm_label,
@@ -699,6 +737,7 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
             "storage": storage, "mc_points": mc_points,
             "batch_offdiag": (np.stack(batch_off, axis=1) if batch_diag else None),
             "n_seeds": n_seeds, "iters": iters, "grid": tuple(int(v) for v in grid),
+            "n_stored": n_stored, "stored_iters": stored_iters,
             "n_q": int(len(w)), "width": width, "depth": depth,
             "bc": bc,
             "disclosure": {**ens.disclosure(),

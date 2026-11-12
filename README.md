@@ -85,11 +85,11 @@ PYTHONPATH=. python -c "from eigen_benchmark.render import figures_p5 as f; [f.A
 
 `p5_stats` recomputes every interval from the committed records with a seed-cluster bootstrap
 (B = 20,000, generator seed 12345) and should reproduce the committed `p5_stats.json` exactly. The
-post hoc line reproduces `p5_posthoc_threshold.json` and `p5_posthoc_order_drops.csv` exactly, and
-`p5_posthoc.json` except its `audit_distance` block: that block counts the stable ladder cells of every
-record file present, and the committed file was written before the runs tagged `e29_*` to `e32_*` were
-added (6,089 stable cells of the variational solver then, 8,180 with every run). The manifests written
-next to these files record the environment and the commit, so they change.
+post hoc line reproduces `p5_posthoc.json`, `p5_posthoc_threshold.json` and
+`p5_posthoc_order_drops.csv` exactly. The `audit_distance` block of `p5_posthoc.json` counts the stable
+ladder cells of every record file present (8,180 of the variational solver), so a record file added
+later changes it. The manifests written next to these files record the environment and the commit, so
+they change.
 
 ## The four deflation rules (arms)
 

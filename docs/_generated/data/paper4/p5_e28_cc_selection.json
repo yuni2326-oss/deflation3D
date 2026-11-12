@@ -1,0 +1,190 @@
+{
+  "stages": {
+    "1": {
+      "choice": {
+        "0": "long",
+        "1": "first",
+        "2": "long",
+        "3": "long",
+        "4": "long",
+        "5": "ff",
+        "6": "long",
+        "7": "long",
+        "8": "long",
+        "9": "long",
+        "10": "ff",
+        "11": "long",
+        "12": "long",
+        "13": "first",
+        "14": "ff",
+        "15": "long",
+        "16": "long",
+        "17": "long",
+        "18": "ff",
+        "19": "long"
+      },
+      "candidates": {
+        "first": "e26_cc_mc",
+        "ff": "e28_cc_s1_ff",
+        "long": "e28_cc_s1_long",
+        "norm": "e28_cc_s1_norm"
+      },
+      "rule": "per seed, the candidate of lowest audit eigenvalue among those whose ladder tail spread is at most 1e-3 (ties broken by candidate order; if none is stable, lowest audit eigenvalue overall); no reference is read"
+    },
+    "2": {
+      "choice": {
+        "0": "ff",
+        "1": "ff",
+        "2": "ff",
+        "3": "ff",
+        "4": "norm",
+        "5": "ff",
+        "6": "ff",
+        "7": "ff",
+        "8": "ff",
+        "9": "ff",
+        "10": "ff",
+        "11": "ff",
+        "12": "ff",
+        "13": "ff",
+        "14": "first",
+        "15": "ff",
+        "16": "ff",
+        "17": "ff",
+        "18": "ff",
+        "19": "first"
+      },
+      "candidates": {
+        "first": "e28_cc_s2_first",
+        "ff": "e28_cc_s2_ff",
+        "long": "e28_cc_s2_long",
+        "norm": "e28_cc_s2_norm"
+      },
+      "rule": "per seed, the candidate of lowest audit eigenvalue among those whose ladder tail spread is at most 1e-3 (ties broken by candidate order; if none is stable, lowest audit eigenvalue overall); no reference is read"
+    },
+    "3": {
+      "choice": {
+        "0": "norm",
+        "1": "norm",
+        "2": "long",
+        "3": "long",
+        "4": "norm",
+        "5": "long",
+        "6": "norm",
+        "7": "long",
+        "8": "norm",
+        "9": "norm",
+        "10": "norm",
+        "11": "long",
+        "12": "long",
+        "13": "long",
+        "14": "long",
+        "15": "norm",
+        "16": "norm",
+        "17": "long",
+        "18": "long",
+        "19": "long"
+      },
+      "candidates": {
+        "first": "e28_cc_s3_first",
+        "ff": "e28_cc_s3_ff",
+        "long": "e28_cc_s3_long",
+        "norm": "e28_cc_s3_norm"
+      },
+      "rule": "per seed, the candidate of lowest audit eigenvalue among those whose ladder tail spread is at most 1e-3 (ties broken by candidate order; if none is stable, lowest audit eigenvalue overall); no reference is read"
+    },
+    "4": {
+      "choice": {
+        "0": "long",
+        "1": "long",
+        "2": "long",
+        "3": "long",
+        "4": "long",
+        "5": "long",
+        "6": "long",
+        "7": "long",
+        "8": "long",
+        "9": "long",
+        "10": "long",
+        "11": "long",
+        "12": "long",
+        "13": "long",
+        "14": "long",
+        "15": "long",
+        "16": "long",
+        "17": "long",
+        "18": "long",
+        "19": "long"
+      },
+      "candidates": {
+        "first": "e28_cc_s4_first",
+        "ff": "e28_cc_s4_ff",
+        "long": "e28_cc_s4_long",
+        "norm": "e28_cc_s4_norm"
+      },
+      "rule": "per seed, the candidate of lowest audit eigenvalue among those whose ladder tail spread is at most 1e-3 (ties broken by candidate order; if none is stable, lowest audit eigenvalue overall); no reference is read"
+    },
+    "5": {
+      "choice": {
+        "0": "ff",
+        "1": "ff",
+        "2": "ff",
+        "3": "ff",
+        "4": "ff",
+        "5": "ff",
+        "6": "ff",
+        "7": "ff",
+        "8": "ff",
+        "9": "ff",
+        "10": "ff",
+        "11": "ff",
+        "12": "ff",
+        "13": "ff",
+        "14": "ff",
+        "15": "ff",
+        "16": "ff",
+        "17": "ff",
+        "18": "ff",
+        "19": "ff"
+      },
+      "candidates": {
+        "first": "e28_cc_s5_first",
+        "ff": "e28_cc_s5_ff",
+        "long": "e28_cc_s5_long",
+        "norm": "e28_cc_s5_norm"
+      },
+      "rule": "per seed, the candidate of lowest audit eigenvalue among those whose ladder tail spread is at most 1e-3 (ties broken by candidate order; if none is stable, lowest audit eigenvalue overall); no reference is read"
+    },
+    "6": {
+      "choice": {
+        "0": "long",
+        "1": "long",
+        "2": "long",
+        "3": "ff",
+        "4": "long",
+        "5": "long",
+        "6": "long",
+        "7": "long",
+        "8": "long",
+        "9": "long",
+        "10": "long",
+        "11": "long",
+        "12": "long",
+        "13": "long",
+        "14": "long",
+        "15": "long",
+        "16": "long",
+        "17": "long",
+        "18": "long",
+        "19": "long"
+      },
+      "candidates": {
+        "first": "e28_cc_s6_first",
+        "ff": "e28_cc_s6_ff",
+        "long": "e28_cc_s6_long",
+        "norm": "e28_cc_s6_norm"
+      },
+      "rule": "per seed, the candidate of lowest audit eigenvalue among those whose ladder tail spread is at most 1e-3 (ties broken by candidate order; if none is stable, lowest audit eigenvalue overall); no reference is read"
+    }
+  }
+}

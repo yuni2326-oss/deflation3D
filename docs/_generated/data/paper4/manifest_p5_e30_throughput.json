@@ -1,0 +1,15 @@
+{
+  "driver": "scripts/p5_e30t_throughput.py",
+  "code_git_sha": "4916ba6e42e2b444c2cda1bade42ecba1b032ee3",
+  "code_git_dirty": false,
+  "node": "dgx02 (NVIDIA GB10), no other job running",
+  "image": "nvcr.io/nvidia/vllm:26.04-py3",
+  "launch": "runs/e30t/e30t_run.sh (outside the repository)",
+  "start_utc": "2026-11-02T22:17:42Z",
+  "end_utc": "2026-11-03T00:18:07Z",
+  "settings": {"structure": "clamped2 (E30-cc first-pass setting)", "ensemble_sizes": [1, 5, 20], "paths": ["first", "ff"],
+               "stages": "1-7 in sequence", "iters_per_stage": 600, "steady_window": "iterations 200 to 400", "seed": 100},
+  "prespecification": "docs/paper4-p5/2026-10-30-p5-review-addendum-prespecification.md section 4.6-3",
+  "deviation": "the prespecification says 300 iterations each; the script solves 600 iterations per stage and reads the steady window 200 to 400",
+  "role": "development measurement (sensitivity of the cost ratio to ensemble size); not a judgment"
+}

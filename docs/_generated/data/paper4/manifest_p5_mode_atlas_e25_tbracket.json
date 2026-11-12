@@ -1,0 +1,32 @@
+{
+  "git_sha": "f269d0a06ae94a83f5a20c208b9afbfa81d0444a",
+  "git_branch": "unknown",
+  "git_dirty": true,
+  "timestamp_utc": "2026-10-16T18:05:56.959239+00:00",
+  "python": "3.12.3",
+  "numpy": "2.1.0",
+  "scipy": "1.17.1",
+  "mpmath": "1.3.0",
+  "platform": "Linux 6.17.0-1026-nvidia aarch64",
+  "precision": "fp64 + mpmath dps=50",
+  "driver": "run_p5.extra_atlas",
+  "tag": "e25_tbracket",
+  "reference": "p5_reference_e25_tbracket",
+  "level": [
+    80,
+    16,
+    8
+  ],
+  "check_level": [
+    40,
+    8,
+    4
+  ],
+  "dof": 403920,
+  "solver": "sparse",
+  "launch": {
+    "git_sha": "f269d0a06ae94a83f5a20c208b9afbfa81d0444a",
+    "git_dirty": false,
+    "timestamp_utc": "2026-10-16T18:05:56.943242+00:00"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "git_sha": "7db308a17a894171acadefd7cb8fe6bcdc844f35",
+  "git_branch": "unknown",
+  "git_dirty": true,
+  "timestamp_utc": "2026-10-23T02:04:15.092962+00:00",
+  "python": "3.12.3",
+  "numpy": "2.1.0",
+  "scipy": "1.17.1",
+  "mpmath": "1.3.0",
+  "platform": "Linux 6.17.0-1026-nvidia aarch64",
+  "precision": "fp64 + mpmath dps=50",
+  "driver": "run_p5_neural.e27_select_run",
+  "stage": 2,
+  "reads": [
+    "e26_cc_mc",
+    "e26_cc_mc_s2_ff"
+  ],
+  "rule": "per seed, the candidate of lowest audit eigenvalue among those whose ladder tail spread is at most 1e-3 (ties broken by candidate order; if none is stable, lowest audit eigenvalue overall); no reference is read",
+  "prespecification": "docs/paper4-p5/2026-10-23-p5-e27-prespecification.md"
+}

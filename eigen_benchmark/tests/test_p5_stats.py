@@ -592,3 +592,579 @@ def test_e21h_contrasts_mode_six_of_each_condition_with_the_run_it_took_its_mode
 
 def test_e21h_is_absent_until_its_records_exist(tmp_path):
     assert st.e21h(str(tmp_path)) is None
+
+
+def test_e23_contrasts_mode_six_against_the_base_run_and_the_fourfold_schedule():
+    """사전규정 2026-10-17 E23 — 주 판정은 lowtail 대 E21g-mc, 보조는 lowtail 대 E21h sched_norm과 fourier 대
+    E21g-mc다. 모두 모드 6의 게이트 없는 정확, 시드 짝지음."""
+    six = lambda ok: _acc_recs(lambda m, s: s in ok, modes=(6,))
+    base_norm = _acc_recs(lambda m, s: m < 6 or s == 14)      # E21g-mc — 모드 6은 시드 14만
+    r = st.e23_from_records(six(set(range(15))), base_norm, six(set(range(20))), six({14}), B=2000)
+    assert r["primary"] == "lowtail"
+    lo, ls, ff = r["lowtail"], r["lowtail_vs_sched"], r["fourier"]
+    assert lo["verdict"] == "rule1" and lo["contrast"][0] == pytest.approx(14 / 20)
+    assert lo["acc_6"] == {"e21lb_s6_norm_x4lo": 15, "e21lb_exact_mc1_norm": 1}
+    assert ls["verdict"] == "rule3" and ls["acc_6"] == {"e21lb_s6_norm_x4lo": 15, "e21lb_s6_norm_x4": 20}
+    assert ff["verdict"] == "rule2" and ff["contrast"][0] == 0.0
+
+
+def test_e23_is_absent_until_its_records_exist(tmp_path):
+    assert st.e23(str(tmp_path)) is None
+
+
+def _cell(mode, seed, matched, mac=0.95, e=0.01, spread=None, outcome="correct"):
+    return {"mode": mode, "seed": seed, "matched_mode": matched, "mac": mac, "e_lam": e, "outcome": outcome,
+            "ladder_tail_spread": spread}
+
+
+def test_e24_contrasts_each_layer_between_the_two_solvers_with_seeds_paired():
+    """사전규정 2026-10-17 E24 — 대수 층: 모드 2–6에서 저장된 낮은 모드로 돌아간 셀, 계기 층: 모드 4–6 사다리 불안정, 최적화 층:
+    모드 6 정확. 강형식은 시드 0–9의 모드 3–6이 모드 1로 돌아가고, 변분형은 모두 정확하다고 둔다."""
+    def strong(m, s):
+        if m >= 3 and s < 10:
+            return _cell(m, s, 1, spread=0.5 if m >= 4 else None)
+        return _cell(m, s, m, spread=1e-6)
+    pin = [strong(m, s) for m in range(1, 7) for s in range(20)]
+    var = [_cell(m, s, m, spread=0.5 if (m >= 4 and s < 4) else 1e-6) for m in range(1, 7) for s in range(20)]
+    r = st.e24_from_records({"box": pin, "lbracket": pin}, {"box": var, "lbracket": var}, "box", B=2000)
+    assert r["primary"] == "algebra@box" and r["judged"]["optimization"] == "lbracket"
+    alg, ins, opt = r["box"]["algebra"], r["box"]["instrument"], r["box"]["optimization"]
+    assert alg["verdict"] == "rule1" and alg["count"] == {"strong": 40, "variational": 0}
+    assert alg["contrast"][0] == pytest.approx(40 / 100)
+    assert ins["count"] == {"strong": 30, "variational": 12} and ins["verdict"] == "rule1"
+    assert opt["count"] == {"strong": 10, "variational": 20} and opt["verdict"] == "rule3"
+    assert r["box"]["accurate_by_mode"][1] == {"strong": 20, "variational": 20}
+    assert not st.returned_to_stored(_cell(3, 0, 1, outcome="invalid_quadrature"))
+    assert not st.returned_to_stored(_cell(3, 0, 1, mac=0.5)) and not st.ladder_unstable(_cell(4, 0, 4))
+
+
+def test_e24_is_absent_until_its_records_exist(tmp_path):
+    assert st.e24(str(tmp_path)) is None
+
+
+def test_e25_combines_the_remedied_stage_and_judges_the_protocol_against_the_original_setting():
+    """사전규정 2026-10-17 E25 — 프로토콜 arm(처방 반영) 대 원 설정 정확 arm, 모드 1–6 게이트 없는 정확. 처방은 단계 6을
+    다시 푼 기록으로 그 단계만 바꾼다."""
+    six = range(1, 7)
+    orig_exact = [_cell(m, s, m if m <= 3 else m + 2) for m in six for s in range(20)]
+    orig_diag = [_cell(m, s, m if m <= 3 else 1) for m in six for s in range(20)]
+    protocol = [_cell(m, s, m if m < 6 else 8) for m in six for s in range(20)]
+    remedy = (6, [_cell(6, s, 6) for s in range(20)], None)
+    span = [{"seed": str(s), "k": str(k), "stage_mode": str(k + 1), "max_offdiag": str(0.01 if k == 2 else 0.9)}
+            for s in range(20) for k in (2, 3)]
+    obs14 = st.e14_observations(st.DATA_DIR)
+    r = st.e25_from_records({"orig_diag": orig_diag, "orig_exact": orig_exact, "protocol": protocol}, span,
+                            obs14, remedy, B=500)
+    assert r["primary"]["verdict"] == "rule1" and r["primary"]["contrast"][0] == pytest.approx(0.5)
+    assert r["accurate_by_mode"]["protocol"][6] == 20 and r["accurate_by_mode"]["protocol_first_pass"][6] == 0
+    assert r["onset"] == {"predicted": 4, "observed": 4, "hit": True}
+    assert r["remedy"]["stage"] == 6 and r["remedy"]["verdict"] == "rule1"
+    assert r["detector"]["verdict"] == "rule2"            # 원 설정은 둘 다 모드 4–6에서 0
+    with pytest.raises(ValueError):
+        st.e25_combine(protocol, (5, [], None))
+
+
+def test_e25_is_absent_until_its_records_exist(tmp_path):
+    assert st.e25(str(tmp_path)) is None
+
+
+def test_e26_contrasts_the_protocol_with_the_original_setting_per_structure():
+    """사전규정 2026-10-18 E26 — 구조마다 모드 1–6 게이트 없는 정확, 프로토콜 대 원 설정, 시드 짝지음."""
+    orig = [_cell(m, s, m if m <= 3 or s < 5 else 8) for m in range(1, 7) for s in range(20)]
+    prot = [_cell(m, s, m) for m in range(1, 7) for s in range(20)]
+    ff = [{**_cell(6, s, 6 if s < 12 else 8), "Lam": 1.30 if s < 12 else 1.55} for s in range(20)]
+    d = [{**_cell(6, s, 8), "Lam": 1.55} for s in range(20)]
+    fb = [{**_cell(6, s, 6), "Lam": 1.000 + 0.001 * s} for s in range(20)]
+    e15b = [{**_cell(6, s, 6), "Lam": 1.010} for s in range(20)]
+    r = st.e26_from_records({"thick": prot}, {"thick": orig}, ff, d, B=1000, ff_base=fb, e15b=e15b)
+    assert r["thick"]["verdict"] == "rule1" and r["thick"]["contrast"][0] == pytest.approx(45 / 120)
+    assert r["thick"]["accurate_by_mode"]["protocol"][6] == 20 and r["thick"]["accurate_by_mode"]["original"][6] == 5
+    assert r["fourier_raw"]["acc_6"] == {"fourier_raw": 12, "e21d": 0} and r["fourier_raw"]["verdict"] == "rule1"
+    # 재풀이 일관성: 12시드가 (1.55 − 1.30)/1.55 ≈ 16 % 내려가 허용오차 5 %를 넘고, 나머지는 그대로다.
+    assert r["fourier_raw"]["resolve"]["n_above_tol"] == 12 and r["fourier_raw"]["resolve"]["n_lowered"] == 12
+    # 음성 대조: 정답 단계의 재풀이는 Λ를 1 % 안에서만 바꾼다 — 검사가 울리지 않는다.
+    rb = r["fourier_base"]["resolve"]
+    assert rb["n_above_tol"] == 0 and rb["max"] == pytest.approx(0.01 / 1.01) and rb["n_lowered"] == 10
+    assert r["fourier_base"]["verdict"] == "rule2"
+
+
+def test_resolve_drop_refuses_mismatched_seeds():
+    with pytest.raises(ValueError):
+        st.resolve_drop([{"mode": 6, "seed": 0, "Lam": 1.0}], [{"mode": 6, "seed": 1, "Lam": 1.0}])
+
+
+def test_lowest_lambda_pick_keeps_the_lower_solution_per_seed_without_reading_the_reference():
+    """시드마다 감사 Λ가 가장 낮은 풀이를 고른다. 첫 풀이(모드 8, Λ 1.59)·재풀이 A(시드 0–9 정확, Λ 1.30)·재풀이 B(시드
+    5–14 정확, Λ 1.31)면 고른 풀이는 시드 0–14가 정확이다 — 각 재풀이보다 많다."""
+    first = [{**_cell(6, s, 8), "Lam": 1.59} for s in range(20)]
+    a = [{**_cell(6, s, 6), "Lam": 1.30} if s < 10 else {**_cell(6, s, 8), "Lam": 1.60} for s in range(20)]
+    b = [{**_cell(6, s, 6), "Lam": 1.31} if 5 <= s < 15 else {**_cell(6, s, 8), "Lam": 1.58} for s in range(20)]
+    r = st.lowest_lambda_pick({"first": first, "a": a, "b": b})
+    assert r["accurate"] == 15 and r["accurate_each"] == {"first": 0, "a": 10, "b": 10}
+    assert r["picked"][0] == "a" and r["picked"][12] == "b" and r["picked"][17] == "b"
+    with pytest.raises(ValueError):
+        st.lowest_lambda_pick({"first": first, "short": a[:19]})
+
+
+def test_e26_tbracket_contrasts_raw_with_the_original_and_the_normalized_protocol():
+    """E26d — 주: 원좌표 프로토콜 대 원 설정 정확(모드 1–6), 보조: 굽힘 모드 1·3에서 원좌표 대 정규화 프로토콜. 정규화가
+    모드 1의 고유값 오차만 키운다고 두면(형상은 맞음) 보조 대비가 양수다."""
+    raw = [_cell(m, s, m, e=0.02) for m in range(1, 7) for s in range(20)]
+    orig = [_cell(m, s, m if m <= 3 else 8) for m in range(1, 7) for s in range(20)]
+    norm = [_cell(m, s, m, e=0.07 if m == 1 and s < 15 else 0.02) for m in range(1, 7) for s in range(20)]
+    r = st.e26_tbracket(raw, orig, norm, B=1000)
+    assert r["verdict"] == "rule1" and r["contrast"][0] == pytest.approx(0.5)
+    c = r["coordinates"]
+    assert c["verdict"] == "rule1" and c["contrast"][0] == pytest.approx(15 / 40)
+    assert c["accurate_by_mode_norm"][1] == 5 and c["e_lam_median_norm_m1"] == pytest.approx(0.07)
+    assert st.e26_tbracket(raw, orig, None, B=200).get("coordinates") is None
+
+
+def test_e26e_crosses_the_resolve_flags_with_the_first_pass_classes():
+    """E26e — 첫 풀이에서 더 높은 모드(시드 0–5, Λ 1.10)였던 시드를 재풀이가 모드로 되돌리면(Λ 0.50) 검사가 울리고, 정확했던
+    시드(Λ 0.50 → 0.501)는 울리지 않는다. 울린 시드만 재풀이를 지키면 정확이 14 → 20이 된다."""
+    first = [({**_cell(2, s, 4), "Lam": 1.10} if s < 6 else {**_cell(2, s, 2), "Lam": 0.50}) for s in range(20)]
+    res = [{**_cell(2, s, 2), "Lam": 0.50 if s < 6 else 0.501} for s in range(20)]
+    r = st.e26e_from_records(first, res, 2)
+    assert r["by_first_class"]["higher"] == {"n": 6, "flagged": 6, "recovered": 6}
+    assert r["by_first_class"]["accurate"] == {"n": 14, "flagged": 0, "recovered": 14}
+    assert (r["accurate_first"], r["accurate_resolved"], r["accurate_after_test"]) == (14, 20, 20)
+
+
+def test_e26e_rule_picks_every_stage_with_at_least_five_higher_mode_cells():
+    recs = ([_cell(2, s, 4 if s < 6 else 2) for s in range(20)] + [_cell(3, s, 4 if s < 4 else 3) for s in range(20)]
+            + [_cell(4, s, 5 if s < 5 else 2) for s in range(20)])
+    assert st.e26e_rule_stages(recs) == [2, 4]
+
+
+# ── E27 (사전규정 2026-10-23-p5-e27-prespecification.md) ─────────────────────────────
+
+def _r27(mode, seed, lam, cls="accurate", spread=1e-6):
+    """정확·더 높은 모드·그 밖 셀 하나."""
+    matched = {"accurate": mode, "higher": mode + 1, "other": mode}[cls]
+    return {"mode": mode, "seed": seed, "Lam": lam, "outcome": "correct" if cls == "accurate" else "spurious",
+            "matched_mode": matched, "mac": 0.99 if cls != "other" else 0.3,
+            "e_lam": 0.01 if cls == "accurate" else 0.5, "ladder_tail_spread": spread}
+
+
+def test_e27_select_stage_prefers_stable_then_lowest_eigenvalue_then_order():
+    """참조를 읽지 않는 선택 — 사다리가 안정한 후보 가운데 감사 Λ가 가장 낮은 것, 동률이면 후보 순서. 안정한 후보가 없으면
+    전 후보 가운데 가장 낮은 것."""
+    recs = {"first": [_r27(3, 0, 1.0), _r27(3, 1, 1.0), _r27(3, 2, 1.0)],
+            "ff": [_r27(3, 0, 0.9, spread=2e-3), _r27(3, 1, 0.9), _r27(3, 2, 1.0)],
+            "long": [_r27(3, 0, 0.95), _r27(3, 1, 0.95), _r27(3, 2, 1.0)]}
+    assert st.e27_select_stage(recs, 3) == {0: "long", 1: "ff", 2: "first"}
+    assert st.e27_select_stage({"first": [_r27(3, 0, 1.0, spread=1.0)], "ff": [_r27(3, 0, 0.5, spread=1.0)]}, 3) == {0: "ff"}
+    with pytest.raises(ValueError):
+        st.e27_select_stage({"first": [_r27(3, 0, 1.0)], "ff": [_r27(3, 1, 1.0)]}, 3)
+
+
+def test_e27_counts_the_selected_solutions_and_reads_the_resolve_test_per_stage():
+    """고른 풀이로 모드를 세고, 단계마다 첫 풀이 대비 Λ 감소가 허용오차를 넘은 시드(울림)를 첫 풀이의 부류와 교차한다:
+    정확했는데 울리면 거짓 양성, 고른 풀이가 정확인데 첫 풀이가 더 높은 모드였고 울리지 않으면 놓침."""
+    cands = {1: {"first": [_r27(1, 0, 1.0), _r27(1, 1, 1.0)]},
+             2: {"first": [_r27(2, 0, 2.0), _r27(2, 1, 3.0, "higher")],
+                 "ff": [_r27(2, 0, 2.01), _r27(2, 1, 2.0)]},
+             3: {"first": [_r27(3, 0, 5.0, "higher"), _r27(3, 1, 4.0)],
+                 "ff": [_r27(3, 0, 5.0, "higher"), _r27(3, 1, 4.02)],
+                 "long": [_r27(3, 0, 4.0), _r27(3, 1, 4.01)],
+                 "norm": [_r27(3, 0, 5.1, "higher"), _r27(3, 1, 4.05)]}}
+    sel = {k: st.e27_select_stage(c, k) for k, c in cands.items()}
+    assert sel[2] == {0: "first", 1: "ff"} and sel[3] == {0: "long", 1: "first"}
+    orig = [_r27(1, 0, 1.0), _r27(2, 0, 2.0), _r27(3, 0, 9.0, "other"),
+            _r27(1, 1, 1.0), _r27(2, 1, 9.0, "other"), _r27(3, 1, 9.0, "other")]
+    first_pass = cands[1]["first"] + cands[2]["first"] + cands[3]["first"]
+    aux = {3: {"reinit": [_r27(3, 0, 5.0, "higher"), _r27(3, 1, 4.0)]}}
+    out = st.e27_from_records(cands, sel, orig, first_pass, aux, B=200)
+    assert out["accurate_by_mode"] == {1: 2, 2: 2, 3: 2} and out["accurate_total"] == 6
+    s2, s3 = out["stages"][2], out["stages"][3]
+    assert (s2["flagged"], s2["false_positive"], s2["missed"]) == (1, 0, 0)
+    assert s2["selected_each"] == {"first": 1, "ff": 1} and s2["repairs_of_higher"] == {"ff": 1}
+    assert s3["repairs_of_higher"] == {"ff": 0, "long": 1, "norm": 0} and s3["selected_each"]["long"] == 1
+    assert s3["first_class"] == {"accurate": 1, "higher": 1, "other": 0} and s3["unstable_selected"] == 0
+    assert out["primary"]["reference_by_mode"] == {1: 2, 2: 1, 3: 0}
+    assert out["vs_first_pass"]["reference_by_mode"] == {1: 2, 2: 1, 3: 1}
+    assert out["aux"]["s3_reinit"] == {"accurate": 1, "repairs_of_higher": 0, "flagged_vs_first": 0}
+    assert out["check_s3_first"] == {"n": 1, "same_class": 1, "max_rel_dlam": 0.0}
+    assert s3["invalid_selected"] == 0
+    assert out["primary"]["verdict"] in ("rule1", "rule2", "rule3")
+
+
+def test_e28_classifies_first_solves_by_the_stage_mac_when_the_run_scored_only_modes_up_to_its_stage():
+    """사전규정 §8 — 단계 k만 푼 실행의 기록은 참조 모드 1–k로만 짝지어, 더 높은 모드에 머문 첫 풀이가 "그 밖"으로 보인다.
+    재채점의 분류(`higher`)를 주면 그 단계의 첫 풀이를 그것으로 나눠 고친 수와 놓침을 센다. 정확 판정은 기록 그대로다."""
+    cands = {1: {"first": [_r27(1, 0, 1.0), _r27(1, 1, 1.0), _r27(1, 2, 1.0)]},
+             2: {"first": [_r27(2, 0, 2.0), _r27(2, 1, 4.0, "other"), _r27(2, 2, 2.05, "other")],
+                 "ff": [_r27(2, 0, 2.1), _r27(2, 1, 2.0), _r27(2, 2, 2.0)]}}
+    sel = {k: st.e27_select_stage(c, k) for k, c in cands.items()}
+    first_pass = cands[1]["first"] + cands[2]["first"]
+    plain = st.e28_cc_from_records(cands, sel, first_pass, first_pass, B=200)["stages"][2]
+    assert plain["first_class"] == {"accurate": 1, "higher": 0, "other": 2} and plain["repairs_of_higher"] == {"ff": 0}
+    out = st.e28_cc_from_records(cands, sel, first_pass, first_pass, B=200, higher={2: {0: False, 1: True, 2: True}})
+    s2 = out["stages"][2]
+    assert s2["first_class"] == {"accurate": 1, "higher": 2, "other": 0} and s2["repairs_of_higher"] == {"ff": 2}
+    assert (s2["flagged"], s2["false_positive"], s2["missed"]) == (1, 0, 1)      # 시드 2: 2.05 → 2.0은 울리지 않는다
+    assert out["accurate_by_mode"] == {1: 3, 2: 3}                               # 정확 판정은 그대로
+
+
+def test_e27_square_first_pass_contrast():
+    sq = [_r27(m, s, 1.0) for m in range(1, 7) for s in range(3)]
+    o16 = [_r27(m, s, 1.0, "accurate" if m < 5 else "other") for m in range(1, 7) for s in range(3)]
+    out = st.e27_square_from_records(sq, o16, B=200)
+    assert out["accurate_by_mode"]["first_pass"] == {m: 3 for m in range(1, 7)}
+    assert out["accurate_by_mode"]["original"] == {1: 3, 2: 3, 3: 3, 4: 3, 5: 0, 6: 0}
+    assert out["verdict"] == "rule1"
+
+
+# ── E28 (사전규정 2026-10-23-p5-e28-prespecification.md) ─────────────────────────────
+
+def test_e28_dispositions_cross_the_reference_free_status_with_accuracy():
+    first = {0: _r27(3, 0, 5.0, "higher"), 1: _r27(3, 1, 4.0), 2: _r27(3, 2, 4.0)}
+    chosen = {0: _r27(3, 0, 4.0), 1: _r27(3, 1, 4.0), 2: _r27(3, 2, 3.9, "other", spread=5e-3)}
+    d = st.dispositions(chosen, first)
+    assert (d["stable"], d["improved"], d["no_further_improvement"]) == (2, 1, 2)
+    assert (d["reportable"], d["undetermined"], d["reportable_accurate"], d["undetermined_accurate"]) == (2, 1, 2, 0)
+
+
+def test_e28_restart_pick_keeps_the_lowest_restart_without_reading_the_reference():
+    first = [_r27(6, 0, 1.6, "higher"), _r27(6, 1, 1.6, "higher")]
+    rs = {"reinit1": [_r27(6, 0, 1.59, "higher"), _r27(6, 1, 1.30)],
+          "reinit2": [_r27(6, 0, 1.31), _r27(6, 1, 1.58, "higher")]}
+    out = st.restart_pick(first, rs, 6)
+    assert out["accurate_each"] == {"reinit1": 1, "reinit2": 1}
+    assert out["accurate_lowest_restart"] == 2 and out["accurate_lowest_with_first"] == 2
+    assert out["flagged_vs_first"] == 2 and len(out["lowest_restart_records"]) == 2
+
+
+def test_e28_tbracket_control_counts_false_positives_on_accurate_first_solves():
+    first = [_r27(k, s, 1.0 + k) for k in (1, 2) for s in range(3)]
+    res = {1: [_r27(1, s, 2.0) for s in range(3)],
+           2: [_r27(2, 0, 3.0), _r27(2, 1, 2.5, "higher"), _r27(2, 2, 3.01)]}
+    out = st.e28_tb_from_records(first, res)
+    assert out[2]["flagged"] == 1 and out[2]["false_positive"] == 1 and out[1]["false_positive"] == 0
+    assert out["total"] == {"false_positive": 1, "accurate_first": 6, "accurate_selected": 5}
+
+
+def test_e28_traction_weight_contrast_reads_the_eigenvalue_mismatch():
+    def rec(m, s, lam, lp, acc=False):
+        r = _r27(m, s, lam, "accurate" if acc else "other")
+        r["lam_param"] = lp
+        return r
+    w1 = [rec(m, s, 1.0, 3.0) for m in range(1, 7) for s in range(3)]
+    w10 = [rec(m, s, 1.0, 1.05, acc=(m == 1)) for m in range(1, 7) for s in range(3)]
+    out = st.e28_pinn_from_records(w10, w1, B=200)
+    assert out["mismatch"]["verdict"] == "rule3" and out["accuracy"]["w10"] == 3 and out["accuracy"]["w1"] == 0
+    assert out["mismatch"]["median_rel"]["w10"] == pytest.approx(0.05)
+
+
+# ── E29 (사전규정 2026-10-30-p5-e29-prespecification.md) — 한 단계 더 ─────────────────────────────────
+
+E29_LAM = {1: 0.0035, 2: 0.0127, 3: 0.029, 4: 0.142, 5: 0.293, 6: 1.288, 7: 1.379}
+
+
+def _r29(mode, seed, lam, matched=None, mac=0.99, spread=1e-6, ref_mode=None):
+    """단계 `mode`의 기록 하나. 짝(기본 = 단계)과 그 짝의 참조로 e_λ·결과를 정한다(실행이 그렇게 채점한다)."""
+    matched = mode if matched is None else matched
+    lr = E29_LAM[mode if ref_mode is None else ref_mode]
+    e = abs(lam - lr) / lr
+    ok = matched == mode and mac >= 0.9 and e <= 0.05
+    return {"mode": mode, "seed": seed, "Lam": lam, "Lam_ref": lr, "matched_mode": matched, "mac": mac, "e_lam": e,
+            "outcome": "correct" if ok else "spurious", "ladder_tail_spread": spread}
+
+
+def _e29_case():
+    """시드 0: 단계 6이 모드 8, 단계 7이 건너뛴 모드 6. 시드 1: 단계 6 정확, 단계 7은 모드 7. 시드 2: 단계 7이 모드 7이지만
+    사다리 불안정. 시드 3: 단계 5가 모드 6(더 높은 모드, 단계 6이 모드 8이라 울리지 않던 것), 단계 7이 모드 5를 찾는다."""
+    first, s7 = [], []
+    for s in range(4):
+        for k in range(1, 5):
+            first.append(_r29(k, s, E29_LAM[k] * 1.01))
+    first += [_r29(5, 0, 0.296), _r29(6, 0, 1.596, matched=6, mac=0.0),
+              _r29(5, 1, 0.296), _r29(6, 1, 1.30),
+              _r29(5, 2, 0.296), _r29(6, 2, 1.596, matched=6, mac=0.0),
+              _r29(5, 3, 1.30, matched=6), _r29(6, 3, 1.596, matched=6, mac=0.0)]
+    s7 = [_r29(7, 0, 1.30, matched=6), _r29(7, 1, 1.40), _r29(7, 2, 1.39, spread=5e-3), _r29(7, 3, 0.293, matched=5)]
+    id6 = {0: (8, 0.99), 2: (8, 0.99), 3: (8, 0.99)}
+    id7 = {0: (6, 0.99), 1: (7, 0.99), 2: (7, 0.99), 3: (5, 0.99)}
+    return first, s7, id7, id6
+
+
+def test_e29_stage_seven_flags_the_last_stage_and_reorders_seven_outputs():
+    """단계 7이 사다리를 통과하고 단계 6보다 5 % 넘게 낮으면 단계 6을 울린다. 단계 7이 건너뛴 모드를 찾으면 일곱 출력의
+    정렬(순위 1–6)이 그 셀을 되찾는다. 앞 단계를 새로 울리는 경우(단계 6이 더 높아 그동안 울리지 않던 단계 5)도 센다."""
+    first, s7, id7, id6 = _e29_case()
+    out = st.e29_from_records(first, s7, id7, id6)
+    assert (out["seeds"], out["stage7_stable"], out["flags_stage6"]) == (4, 3, 2)
+    assert (out["stage6_accurate"], out["false_positives"], out["flags_on_inaccurate"]) == (1, 0, 2)
+    assert out["new_earlier_flags"] == 1 and out["per_seed"][3]["new_earlier_flags"] == [5]
+    assert out["stage7_modes"] == {"5": 1, "6": 1, "7": 2}
+    assert [r["reordered6"] for r in out["per_seed"]] == [5, 6, 5, 4]
+    assert [r["reordered7"] for r in out["per_seed"]] == [6, 6, 5, 6]
+    assert (out["reordered_accurate_six_outputs"], out["reordered_accurate_seven_outputs"]) == (20, 23)
+    assert out["flagged_min_drop"] == pytest.approx(1 - 1.30 / 1.596)
+    assert out["accurate_max_drop"] == pytest.approx(1 - 1.40 / 1.30)
+    plain = st.e29_from_records(first, s7)          # 재채점이 없으면 기록의 짝(참조 모드 1–k)을 쓴다
+    assert plain["flags_stage6"] == 2 and plain["stage7_modes"] == {"5": 1, "6": 1, "7": 2}
+    with pytest.raises(ValueError):
+        st.e29_from_records(first, s7[:3])
+
+
+def test_e29_reads_the_registered_verdicts_from_the_files(tmp_path):
+    import json
+    first, s7, id7, id6 = _e29_case()
+    w = lambda name, recs: (tmp_path / name).write_text("".join(json.dumps(r) + "\n" for r in recs), encoding="utf-8")
+    w("p5_neural_e21lb_exact_mc1_records.jsonl", first)
+    w("p5_neural_e29_lb_s7_records.jsonl", s7)
+    assert st.e29(str(tmp_path)) is None                       # manifest가 없으면 끝나지 않은 실행
+    (tmp_path / "manifest_p5_neural_e29_lb_s7.json").write_text("{}")
+    out = st.e29(str(tmp_path))
+    assert list(out) == ["lbracket"] and out["lbracket"]["flags_stage6"] == 2
+    assert out["lbracket"]["verdict"] == {"prediction": {"flags_stage6_at_least": 14}, "hit": False}
+    assert out["lbracket"]["ident_source"]["stage7"] == "records (stage MAC missing)"
+    rows = "seed,mode_ref,mac_ref\n" + "".join(f"{s},{m},{a}\n" for s, (m, a) in id7.items())
+    (tmp_path / "p5_exploit_e29_lb_s7_stage_mac.csv").write_text(rows, encoding="utf-8")
+    (tmp_path / "manifest_p5_exploit_e29_lb_s7_stage_mac.json").write_text(json.dumps({"reproduces_record": False, "n_ref": 10}))
+    assert st.e29(str(tmp_path))["lbracket"]["ident_source"]["stage7"] == "records (stage MAC did not reproduce the run)"
+    (tmp_path / "manifest_p5_exploit_e29_lb_s7_stage_mac.json").write_text(json.dumps({"reproduces_record": True, "n_ref": 10}))
+    assert st.e29(str(tmp_path))["lbracket"]["ident_source"]["stage7"] == "stage MAC against FEM modes 1-10"
+
+
+# ── E30 (사전규정 2026-10-30-p5-e30-prespecification.md) — 단계적 배분 ─────────────────────────────────
+
+def _r30(k, s, lam, matched=None, spread=1e-6):
+    lr = float(k)
+    matched = k if matched is None else matched
+    e = abs(lam - lr) / lr
+    ok = matched == k and e <= 0.05
+    return {"mode": k, "seed": s, "Lam": lam, "Lam_ref": lr, "matched_mode": matched, "mac": 0.99, "e_lam": e,
+            "outcome": "correct" if ok else "spurious", "ladder_tail_spread": spread}
+
+
+def _e30_case():
+    """시드 0·2는 모든 단계가 first로 정확. 시드 1은 단계 3이 두 경로 모두 모드 4에 서고 단계 4가 건너뛴 모드 3을 찾아
+    단계 3이 울린다(j* = 3). 2회차에서 held-rate가 단계 3을 고치고 단계 4–6을 다시 푼다."""
+    def stage(k, rnd):
+        out = {}
+        for p_ in (("first",) if k == 7 else ("first", "norm") + (("ff", "long") if rnd == 2 and k == 3 else ())):
+            recs = []
+            for s in range(3):
+                f = {"first": 1.01, "norm": 1.02, "ff": 1.03, "long": 1.015}[p_]
+                if s == 1 and rnd == 1 and k == 3:
+                    recs.append(_r30(3, 1, 4.04 if p_ == "first" else 4.05, matched=4))
+                elif s == 1 and rnd == 1 and k == 4:
+                    recs.append(_r30(4, 1, 3.03 if p_ == "first" else 3.05, matched=3))
+                elif s == 1 and rnd == 2 and k == 3 and p_ in ("first", "norm", "ff"):
+                    recs.append(_r30(3, 1, 4.04 if p_ == "first" else 4.05, matched=4))
+                else:
+                    recs.append(_r30(k, s, k * f))
+            out[p_] = recs
+        return out
+    cands1 = {k: stage(k, 1) for k in range(1, 8)}
+    cands2 = {k: stage(k, 2) for k in range(3, 8)}
+    sel1 = {k: {s: "first" for s in range(3)} for k in range(1, 8)}
+    sel2 = {k: {s: "first" for s in range(3)} for k in range(3, 8)}
+    sel2[3][1] = "long"
+    plan = {"flagged": {"1": 3}, "flags": {"0": [], "1": [3], "2": []}, "j_min": 3}
+    tags1 = {(k, p_): f"r1_{k}_{p_}" for k in range(1, 8) for p_ in cands1[k]}
+    tags2 = {(k, p_): f"r2_{k}_{p_}" for k in range(3, 8) for p_ in cands2[k]}
+    cost = {**{t: 1.0 for t in tags1.values()}, **{t: (4.0 if t.endswith("long") else 1.0) for t in tags2.values()}}
+    first = [r for k in range(1, 7) for r in cands1[k]["first"]]
+    return cands1, sel1, plan, cands2, sel2, cost, tags1, tags2, first
+
+
+def test_e30_order_flags_and_restricted_selection():
+    ch = {1: _r30(1, 0, 1.0), 2: _r30(2, 0, 4.0, matched=4), 3: _r30(3, 0, 2.0, matched=2), 4: _r30(4, 0, 4.1),
+          7: _r30(7, 0, 3.5, spread=5e-3)}
+    assert st.e30_order_flags(ch) == [2]                     # 단계 7은 사다리 불안정이라 경쟁자가 아니다
+    ch[7] = _r30(7, 0, 3.5)
+    assert st.e30_order_flags(ch) == [2, 4]                  # 단계 7이 마지막 보고 단계를 울린다
+    recs = {"first": [_r30(3, 0, 4.0), _r30(3, 1, 4.0)], "norm": [_r30(3, 0, 3.1), _r30(3, 1, 3.1)],
+            "long": [_r30(3, 0, 3.0), _r30(3, 1, 3.0)]}
+    assert st.e30_select_stage(recs, 3, {0: ("first", "norm"), 1: ("first", "norm", "long")}) == {0: "norm", 1: "long"}
+
+
+def test_e30_counts_the_final_chain_and_the_cost_each_seed_called():
+    cands1, sel1, plan, cands2, sel2, cost, tags1, tags2, first = _e30_case()
+    out = st.e30_from_records(cands1, sel1, plan, cands2, sel2, cost, tags1, tags2, first, 6.0, B=200)
+    assert out["round1_accurate"] == 16 and out["accurate"] == 18 and out["first_pass_accurate"] == 16
+    assert out["accurate_by_stage"] == {k: 3 for k in range(1, 7)}
+    assert (out["flags_round1"], out["false_positives_round1"], out["flags_final"], out["false_positives_final"]) == (1, 0, 0, 0)
+    assert out["round2"]["1"]["chosen"] == "long" and out["round2"]["1"]["accurate_after"] is True
+    assert out["round2_reproduces_round1"] == {"compared": 10, "max_rel_dlam": 0.0, "mismatch": 0}
+    c = out["cost"]
+    assert c["round1_gpu_h_per_seed"] == 13.0 and c["ensemble_gpu_h"] == 27.0
+    assert c["per_seed_ratio"] == {"0": pytest.approx(13 / 6), "1": pytest.approx(25 / 6), "2": pytest.approx(13 / 6)}
+    assert c["mean_ratio"] == pytest.approx((2 * 13 + 25) / 18)
+    assert out["d_first"]["verdict"] in ("rule1", "rule2")
+    bad = {**plan, "flags": {"0": [], "1": [], "2": []}}
+    with pytest.raises(ValueError):                         # 계획의 울림은 1회차 사슬에서 다시 계산한 것과 같아야 한다
+        st.e30_from_records(cands1, sel1, bad, cands2, sel2, cost, tags1, tags2, first, 6.0, B=200)
+    cands2[5]["first"][0] = _r30(5, 0, 5.06)                # 울리지 않은 시드의 2회차가 1회차를 되풀이하지 않으면 센다
+    out = st.e30_from_records(cands1, sel1, plan, cands2, sel2, cost, tags1, tags2, first, 6.0, B=200)
+    assert out["round2_reproduces_round1"]["mismatch"] == 1 and out["accurate"] == 18
+
+
+def test_e30_chain_quality_counts_testability_flags_and_provisional_stages():
+    """보완 사전규정 §4.4 — 단계 j는 뒤 단계(≤ 7) 가운데 사다리를 통과한 것이 있으면 검사 가능하다. 잠정(고른 해가 사다리 불안정)
+    뒤의 단계는 위쪽 잠정이다."""
+    ch0 = {k: _r30(k, 0, float(k) * 1.01) for k in range(1, 8)}                   # 모두 정확, 단계 7까지 안정
+    ch1 = {**{k: _r30(k, 1, float(k) * 1.01) for k in range(1, 8)},
+           3: _r30(3, 1, 4.04, matched=4), 4: _r30(4, 1, 3.03, matched=3),      # 단계 3이 높은 모드, 단계 4가 그 아래 모드
+           5: _r30(5, 1, 5.05, spread=5e-3)}                                     # 단계 5는 정확하지만 잠정
+    ch2 = {**{k: _r30(k, 2, float(k) * 1.01) for k in range(1, 6)},
+           6: _r30(6, 2, 6.9), 7: _r30(7, 2, 7.07, spread=5e-3)}                # 단계 6 고유값 오차, 단계 7 불안정
+    q = st.e30_chain_quality({0: ch0, 1: ch1, 2: ch2})
+    assert q["accurate"] == 6 + 4 + 5 and q["all_accurate_seeds"] == 1
+    assert q["provisional"] == 1 and q["upstream_provisional"] == 1              # 시드 1의 단계 5, 그 뒤 단계 6
+    assert q["untestable_inaccurate"] == 1 and q["untestable_accurate"] == 0     # 시드 2의 단계 6(뒤 단계 7이 불안정)
+    assert q["testable_inaccurate"] == 2                                         # 시드 1의 단계 3·4
+    assert q["testable_inaccurate_flagged"] == 1                                 # 단계 3만 울린다(단계 4는 뒤 단계보다 낮다)
+    assert q["testable_accurate"] == 6 + 4 + 5
+    assert q["testable_accurate_flagged"] == 0
+    assert q["seed_accurate_counts"] == {"0/6": 0, "1/6": 0, "2/6": 0, "3/6": 0, "4/6": 1, "5/6": 1, "6/6": 1}
+
+
+def test_sorted_seed_accurate_reorders_by_the_audit_eigenvalue():
+    recs = [_r30(k, 0, float(k) * 1.01) for k in range(1, 7)]
+    swap = [_r30(1, 1, 1.01), _r30(2, 1, 3.03, matched=3), _r30(3, 1, 2.02, matched=2)] + [
+        _r30(k, 1, float(k) * 1.01) for k in range(4, 7)]
+    assert st.sorted_seed_accurate(recs + swap) == {0: 6, 1: 6}
+    bad = [_r30(k, 2, float(k) * 1.2) if k == 6 else _r30(k, 2, float(k)) for k in range(1, 7)]
+    assert st.sorted_seed_accurate(bad) == {2: 5}
+
+
+def test_b3_compares_one_uniform_run_with_the_e30_chains():
+    """B3(E31)은 한 실행이라 단계마다 기록이 하나다. 대비는 E30 − B3(E30이 나으면 규칙 1)과 B3 − 첫 통과이고, 순서 검사와
+    정렬은 판독으로만 센다(단계 7이 없어 단계 6은 검사할 수 없다)."""
+    def chain(s, skip):
+        if not skip:
+            return [_r30(k, s, float(k) * 1.01) for k in range(1, 7)]
+        return [_r30(1, s, 1.01), _r30(2, s, 3.03, matched=3), _r30(3, s, 2.02, matched=2)] + [
+            _r30(k, s, float(k) * 1.01) for k in range(4, 7)]
+    b3 = [r for s in range(20) for r in chain(s, s < 5)]
+    good = [r for s in range(20) for r in chain(s, False)]
+    first = [r for s in range(20) for r in chain(s, s < 10)]
+    r = st.b3_from_records(b3, good, good, first, 45.0, 18.0, B=2000)
+    assert r["accurate"] == 110 and r["accurate_by_stage"] == {1: 20, 2: 15, 3: 15, 4: 20, 5: 20, 6: 20}
+    assert (r["e30_final_accurate"], r["e30_round1_accurate"], r["first_pass_accurate"]) == (120, 120, 100)
+    assert r["d_e30_final"]["verdict"] == "rule1" and r["d_e30_final"]["contrast"][0] == pytest.approx(10 / 120)
+    assert r["d_first"]["verdict"] == "rule1" and r["d_first"]["contrast"][0] == pytest.approx(10 / 120)
+    oc = r["order_check"]
+    assert oc["flags"] == 5 and oc["false_positives"] == 0 and oc["inaccurate_stages_1_5"] == 10
+    assert oc["by_seed"] == {str(s): [2] for s in range(5)}
+    assert r["sorted_accurate"] == 120 and r["cost"]["ratio"] == pytest.approx(2.5)
+
+
+def test_e31r_picks_stage_6_among_the_four_round_two_paths():
+    """E31r(사후 판독): 단계 6만 네 경로(1회차 first·norm, ff, long)에서 2회차 규칙으로 고른 가상 사슬을 1회차 사슬과 견준다.
+    사다리 불안정한 정확 해는 안정한 부정확 해에 밀린다(시드 11) — 정확한 경로가 있었는데 놓친 시드로 센다."""
+    chain = [_r30(k, s, float(k) * 1.01) for s in range(20) for k in range(1, 6)] + \
+        [_r30(6, s, 6.18, matched=7) for s in range(20)]
+    first = [_r30(6, s, 6.18, matched=7) for s in range(20)]
+    norm = [_r30(6, s, 6.20, matched=7) for s in range(20)]
+    ff = [_r30(6, s, 6.06) if s < 5 else _r30(6, s, 6.19, matched=7) for s in range(20)]
+    long = [_r30(6, s, 6.05) if s < 10 else _r30(6, s, 6.40) if s == 10 else
+            _r30(6, s, 6.05, spread=5e-3) if s == 11 else _r30(6, s, 6.19, matched=7) for s in range(20)]
+    r = st.e31r_from_records({"first": first, "norm": norm, "ff": ff, "long": long}, chain, B=2000)
+    assert r["accurate_by_path"] == {"first": 0, "norm": 0, "ff": 5, "long": 11}
+    assert r["mode6_shape_by_path"]["long"] == 12 and r["unstable_by_path"]["long"] == 1
+    assert r["chosen"] == {"first": 10, "norm": 0, "ff": 0, "long": 10}
+    assert r["stage6_accurate"] == 10 and r["seeds_with_an_accurate_path"] == 11 and r["selection_missed"] == [11]
+    assert (r["round1_accurate"], r["hypothetical_accurate"]) == (100, 110)
+    assert r["d_round1"]["verdict"] == "rule1" and r["d_round1"]["contrast"][0] == pytest.approx(10 / 120)
+    assert r["per_seed"]["0"]["chosen"] == "long" and r["per_seed"]["11"]["long"] == [6.05, True]
+
+
+# ── E31p 지도 적합 판독 (사전규정 2026-11-08-p5-e31p-prespecification.md) ──
+
+def test_e31p_compares_the_deflated_fit_with_the_stage_6_of_each_seed():
+    st6 = {s: 1.70 + 0.001 * s for s in range(20)}
+    rows6 = [{"seed": str(s), "Lam_deflated": 1.65 if s < 19 else 1.80, "e_lam_check_0": 0.01, "mac_check_0": 0.999}
+             for s in range(20)]
+    rows7 = [{"seed": str(s), "Lam_deflated": 1.69, "e_lam_check_0": 0.008, "mac_check_0": 0.998} for s in range(20)]
+    r = st.e31p_from_rows(rows6, rows7, st6, {s: 1.705 for s in range(20)})
+    assert r["verdict"] == "rule1" and r["n_below_own_stage6"] == 19 and r["control_ok"] is True
+    assert r["lam_deflated_median"] == pytest.approx(1.65) and r["lam_stage6_median"] == pytest.approx(1.7095)
+    assert r["n7_below_own_stage6"] == 20 and r["n_below_round1_stage6"] == 19
+    assert r["mac_held_out_median"] == {"6": pytest.approx(0.999), "7": pytest.approx(0.998)}
+    bad = [{**x, "Lam_deflated": 1.75} for x in rows6]
+    assert st.e31p_from_rows(bad, rows7, st6)["verdict"] == "rule2"
+    assert "n_below_round1_stage6" not in st.e31p_from_rows(bad, rows7, st6)
+    assert st.e31p_from_rows(rows6, [{**x, "e_lam_check_0": 0.2} for x in rows7], st6)["control_ok"] is False
+    assert st.E31P_PREDICTION == {"verdict": "rule1", "n_below_own_stage6_at_least": 18, "control_ok": True}
+
+
+def test_e31p_needs_both_fits(tmp_path):
+    assert st.e31p(str(tmp_path)) is None
+
+
+# ── E32 대수 층 보강 (사전규정 2026-11-09-p5-e32-prespecification.md) ──
+
+def _e32_rec(m, s, ok=True, pm=0.5, off=None, spread=1e-5, kept=True, e=None):
+    """게이트 없는 정확(`accurate`)은 짝 모드·MAC·e_λ로 정한다. 실패 셀은 형상을 지켰는지(`kept`)를 고른다."""
+    return {"mode": m, "seed": s, "outcome": "correct" if ok else "spurious", "matched_mode": m if (ok or kept) else 1,
+            "mac": 0.99 if (ok or kept) else 0.3, "e_lam": (0.01 if ok else 0.4) if e is None else e,
+            "projected_mass_fraction": pm, "batch_offdiag": off, "ladder_tail_spread": spread}
+
+
+def _e32_run(lost=(), off=(0.0, 0.03, 0.05, 0.055), pm_lost=0.001, n=20, kept_seeds=12):
+    out = []
+    for s in range(n):
+        for m in range(1, 7):
+            bad = m in lost
+            out.append(_e32_rec(m, s, ok=not bad, pm=pm_lost if bad else 0.5, off=None if m < 3 else off[m - 3],
+                                kept=s < kept_seeds))
+    return out
+
+
+def test_e32_pair_contrasts_the_exact_projection_with_the_storage_practice_seed_by_seed():
+    ex, sto = _e32_run(), _e32_run(lost=(5, 6))
+    r = st.e32_pair(ex, sto)
+    assert r["verdict"] == "rule1" and r["contrast"][0] == pytest.approx(40 / 60)
+    assert r["exact"]["acc_4_6"] == 60 and r["storage"]["acc_4_6"] == 20
+    assert r["storage"]["accurate_by_mode"] == {1: 20, 2: 20, 3: 20, 4: 20, 5: 0, 6: 0}
+    f = r["storage"]["failing_4_6"]
+    assert f["n"] == 40 and f["shape_kept"] == 24 and f["outcomes"] == {"spurious": 40}
+    assert f["remaining_mass_median"] == pytest.approx(0.001) and f["e_lam_median_by_mode"][5] == pytest.approx(0.4)
+    assert r["storage"]["remaining_mass_median_by_mode"][5] == pytest.approx(0.001)
+    assert r["storage"]["drift_median_by_stage"] == {3: 0.0, 4: 0.03, 5: 0.05, 6: 0.055}
+    assert r["exact"]["ladder_stable"] == 120
+    assert st.e32_pair(sto, sto)["verdict"] == "rule2"
+    assert st.e32_pair(sto, ex)["verdict"] == "rule3"
+
+
+def test_e32_drift_law_fits_the_log_slope_over_the_sample_sizes():
+    d = {B: {4: 0.94 / np.sqrt(B), 5: 1.58 / np.sqrt(B)} for B in (283, 1134, 4536)}
+    law = st.e32_drift_law(d, stages=(4, 5))
+    assert law[4]["slope"] == pytest.approx(-0.5, abs=1e-9) and law[5]["ratio_283_1134"] == pytest.approx(np.sqrt(1134 / 283))
+    assert law[4]["points"][0] == [283, pytest.approx(0.94 / np.sqrt(283))]
+    two = st.e32_drift_law({1134: {4: 0.028}, 4536: {4: 0.014}}, stages=(4,))
+    assert two[4]["slope"] is None and two[4]["ratio_283_1134"] is None
+
+
+def test_e32_hits_score_each_registered_prediction():
+    tb_ex, tb_sto = _e32_run(), _e32_run(lost=(5, 6))
+    sto = {283: _e32_run(lost=(4, 5, 6), off=(0.0, 0.056, 0.094, 0.11)), 1134: _e32_run(lost=(5, 6)),
+           4536: _e32_run(lost=(5,), off=(0.0, 0.015, 0.023, 0.027))}
+    rows = [{"source": "e26_tb_raw_mc", "B": "1651", "stage": str(k), "seed": "0", "drift": str(v)}
+            for k, v in ((3, 0.001), (4, 0.03), (5, 0.05), (6, 0.05))]
+    r = st.e32_from_records(tb_sto, tb_ex, sto, _e32_run(), rows)
+    assert r["drift_prediction"]["tbracket_from_e26d"] == {3: 0.001, 4: 0.03, 5: 0.05, 6: 0.05}
+    assert r["b283"]["verdict"] == "rule1" and r["storage_by_B"][4536]["acc_4_6"] == 40
+    pred = {"tb_verdict": "rule1", "tb_storage_acc_4_6_at_most": 40, "tb_storage_modes_at_most": {5: 0, 6: 0},
+            "tb_failing_mass_at_most": 0.01, "tb_drift_factor": 1.25, "tb_drift_stages": [4, 5],
+            "b283_ratio_range": [1.6, 2.5], "b283_ratio_stages": [4, 5], "b283_verdict": "rule1",
+            "b283_exact_acc_4_6_at_least": 50, "b283_storage_modes_at_most": {4: 10}}
+    assert all(st.e32_hits(r, pred).values()) and len(st.e32_hits(r, pred)) == 9
+    miss = st.e32_hits(r, {**pred, "tb_drift_factor": 1.05, "tb_drift_stages": [6], "b283_storage_modes_at_most": {4: -1},
+                           "tb_storage_modes_at_most": {4: 10}})
+    assert miss["tb_drift"] is False and miss["b283_storage_modes"] is False and miss["tb_storage_modes"] is False
+    assert st.e32_hits(r, {}) == {}
+    assert set(st.e32_hits(r, st.E32_PREDICTION)) == {"tb_verdict", "tb_storage_modes", "tb_failing_mass", "tb_drift",
+                                                       "b283_verdict", "b283_exact_acc_4_6", "b283_ratio"}
+    assert st.E32_PREDICTION["tb_storage_modes_at_most"] == {4: 10, 5: 10}
+    assert st.E32_PREDICTION["tb_drift_stages"] == [3, 4] and st.E32_PREDICTION["b283_ratio_range"] == [1.7, 2.5]
+
+
+def test_e32_needs_every_run(tmp_path):
+    assert st.e32(str(tmp_path)) is None

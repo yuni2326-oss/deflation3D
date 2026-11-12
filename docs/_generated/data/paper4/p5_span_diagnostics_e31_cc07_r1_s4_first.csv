@@ -1,0 +1,2 @@
+arm,condition,stage_mode,n_seeds,iters,n_seeds_summarized,k,kappa_gram,kappa_gram_times_eps,dev_identity,max_offdiag,absc_12,absc_13,absc_23,lam_min_normalized,qr_orth_defect,n_dropped,dtype,measure_dtype,span_finite_frac,eps_machine,rank_1e10,rank_1e12,rank_1e16,gram_solve_finite_frac
+p5_neural_3d[exact projection],mc,4,20,20000,20,3,7.060946099274032,1.5678449870102433e-15,0.24374608304472628,0.24227726011009312,0.006080587896538589,0.24227726011009304,0.008440454365529844,0.7562539169552738,3.831958375468773e-16,0,float64,float64,1.0,2.220446049250313e-16,3,3,3,1.0

@@ -1,0 +1,31 @@
+{
+  "git_sha": "b8809f72df4a95b84a6a26630556a15acc57cd23",
+  "git_branch": "unknown",
+  "git_dirty": true,
+  "timestamp_utc": "2026-11-06T15:46:27.362596+00:00",
+  "python": "3.12.3",
+  "numpy": "2.1.0",
+  "scipy": "1.17.1",
+  "mpmath": "1.3.0",
+  "platform": "Linux 6.17.0-1026-nvidia aarch64",
+  "precision": "fp64 + mpmath dps=50",
+  "driver": "run_p5_neural.e30_plan_run",
+  "structure": "cc07",
+  "rule": "stage j (1-6) is flagged when a later stage i (up to the look-ahead stage 7) of the seed's chain has ladder tail spread at most 1e-3 and audit eigenvalue below (1 - 0.05) times that of stage j; j* is the earliest flagged stage; no reference is read",
+  "reads": [
+    "e31_cc07_fp",
+    "e31_cc07_r1_s1_norm",
+    "e31_cc07_r1_s2_first",
+    "e31_cc07_r1_s2_norm",
+    "e31_cc07_r1_s3_first",
+    "e31_cc07_r1_s3_norm",
+    "e31_cc07_r1_s4_first",
+    "e31_cc07_r1_s4_norm",
+    "e31_cc07_r1_s5_first",
+    "e31_cc07_r1_s5_norm",
+    "e31_cc07_r1_s6_first",
+    "e31_cc07_r1_s6_norm",
+    "e31_cc07_r1_s7_first"
+  ],
+  "prespecification": "docs/paper4-p5/2026-11-03-p5-e31-prespecification.md"
+}

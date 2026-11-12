@@ -1,0 +1,31 @@
+{
+  "flagged": {
+    "19": 3
+  },
+  "flags": {
+    "0": [],
+    "1": [],
+    "2": [],
+    "3": [],
+    "4": [],
+    "5": [],
+    "6": [],
+    "7": [],
+    "8": [],
+    "9": [],
+    "10": [],
+    "11": [],
+    "12": [],
+    "13": [],
+    "14": [],
+    "15": [],
+    "16": [],
+    "17": [],
+    "18": [],
+    "19": [
+      3
+    ]
+  },
+  "j_min": 3,
+  "rule": "stage j (1-6) is flagged when a later stage i (up to the look-ahead stage 7) of the seed's chain has ladder tail spread at most 1e-3 and audit eigenvalue below (1 - 0.05) times that of stage j; j* is the earliest flagged stage; no reference is read"
+}

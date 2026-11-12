@@ -1,0 +1,22 @@
+{
+  "git_sha": "beea250f8a6d342f37872407545cd2dd60045419",
+  "git_branch": "master",
+  "git_dirty": true,
+  "timestamp_utc": "2026-11-10T11:22:18.944058+00:00",
+  "python": "3.12.3",
+  "numpy": "2.5.0",
+  "scipy": "1.18.0",
+  "mpmath": "1.3.0",
+  "platform": "Linux 6.17.0-1026-nvidia aarch64",
+  "precision": "fp64 + mpmath dps=50",
+  "driver": "p5_posthoc.order_drops_main",
+  "reads": "p5_neural_*_records.jsonl and the E30/E31 selections",
+  "output": "p5_posthoc_order_drops.csv",
+  "rows": 3000,
+  "launch": {
+    "git_sha": "beea250f8a6d342f37872407545cd2dd60045419",
+    "git_dirty": true,
+    "timestamp_utc": "2026-11-10T11:22:18.920705+00:00"
+  },
+  "role": "post hoc (r6.2 review, 2026-11-10): for every reported stage j <= 6 of the original settings, the eight first passes, and the chains of the staged allocation, the deepest drop 1 - Lambda_i/Lambda_j over the later ladder-stable stages i of the same seed, the quantity that the order check compares with t; not judgments"
+}

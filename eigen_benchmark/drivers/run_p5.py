@@ -311,18 +311,25 @@ def mode_atlas(outdir=None) -> dict:
 # 커밋된 구조 참조(`structure_reference`)에서 읽는다 — 원고 4.7절이 인용한 값과 같은 출처다. 형상만 참조
 # 사다리의 최상단과 그 아래 단에서 다시 풀어(고정 시작벡터) 렌더 점에 쓰고, 두 단의 형상 일치를 남긴다.
 EXTRA_ATLAS = {"e21_lbracket": "p5_reference_e21_lbracket",
-               "e22_bilayer": "p5_reference_e22_bilayer"}
+               "e22_bilayer": "p5_reference_e22_bilayer",
+               "e25_tbracket": "p5_reference_e25_tbracket"}     # r2(2026-10-17) — 전향 적용 구조
 RENDER_STEP = 0.025       # L-브래킷 평면 안 렌더 점 간격 — 기존 도감의 폭 방향 간격(0.2/8)과 같다
 
 
 def render_blocks(g) -> list:
     """렌더용 구조점 블록 [(lo, hi, (nx, ny, nz))]. L-브래킷은 상자 셋(팔1·모서리·팔2), 그 밖은 기존
     도감과 같은 격자의 상자 하나다."""
-    if g.get("kind") != "L":
+    if g.get("kind") not in ("L", "T"):
         return [((0.0, 0.0, 0.0), (float(g["L"]), float(g["b"]), float(g["h"])), tuple(ATLAS_GRID))]
     L, b, h, a = (float(g[k]) for k in ("L", "b", "h", "a"))
     n = lambda length: int(round(length / RENDER_STEP)) + 1
     nz = ATLAS_GRID[2]
+    if g["kind"] == "T":
+        # E25 — 줄기·접합·두 날개(`p5_block.t_blocks`와 같은 순서)
+        return [((0.0, 0.0, 0.0), (L - b, b, h), (n(L - b), n(b), nz)),
+                ((L - b, 0.0, 0.0), (L, b, h), (n(b), n(b), nz)),
+                ((L - b, -a, 0.0), (L, 0.0, h), (n(b), n(a), nz)),
+                ((L - b, b, 0.0), (L, b + a, h), (n(b), n(a), nz))]
     return [((0.0, 0.0, 0.0), (L - b, b, h), (n(L - b), n(b), nz)),
             ((L - b, 0.0, 0.0), (L, b, h), (n(b), n(b), nz)),
             ((L - b, b, 0.0), (L, b + a, h), (n(b), n(a), nz))]

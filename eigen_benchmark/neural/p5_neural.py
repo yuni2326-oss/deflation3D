@@ -31,8 +31,8 @@ def quadrature(grid=CERTIFIED_GRID, device: str = "cpu", geometry=None):
     한 번의 텐서곱으로 끝난다."""
     torch.set_default_dtype(torch.float64)
     g = P5_GEOMETRY if geometry is None else geometry
-    if g.get("kind") in ("L", "bilayer"):
-        # L-브래킷(E21)·두 층(E22): FEM 쪽 인증·채점 격자와 같은 합성 Gauss를 쓴다.
+    if g.get("kind") in ("L", "bilayer", "T"):
+        # L-브래킷(E21)·두 층(E22)·T-브래킷(E25): FEM 쪽 인증·채점 격자와 같은 합성 Gauss를 쓴다.
         from ..problems.p5_block import _tensor_grid
         P, W = _tensor_grid(grid, g)
         return torch.as_tensor(P, device=device), torch.as_tensor(W, device=device)
@@ -84,8 +84,26 @@ def mc_quadrature(n_points: int, rng, device: str = "cpu", geometry=None):
         pts = torch.as_tensor(lo[blk] + u * (hi_b[blk] - lo[blk]), device=device)
         w = torch.full((int(n_points),), float(vols.sum()) / int(n_points), device=device)
         return pts, w
+    if g.get("kind") == "T":
+        # E25 — 상자 넷(줄기·접합·두 날개)을 부피에 비례해 고르고 그 안에서 균등하게 뽑는다(L과 같은 방식).
+        L, b, h, a = (float(g[k]) for k in ("L", "b", "h", "a"))
+        lo = np.array([[0.0, 0.0, 0.0], [L - b, 0.0, 0.0], [L - b, -a, 0.0], [L - b, b, 0.0]])
+        hi_b = np.array([[L - b, b, h], [L, b, h], [L, 0.0, h], [L, b + a, h]])
+        vols = np.prod(hi_b - lo, axis=1)
+        blk = rng.choice(len(vols), size=int(n_points), p=vols / vols.sum())
+        u = rng.uniform(size=(int(n_points), 3))
+        pts = torch.as_tensor(lo[blk] + u * (hi_b[blk] - lo[blk]), device=device)
+        w = torch.full((int(n_points),), float(vols.sum()) / int(n_points), device=device)
+        return pts, w
+    if g.get("kind") == "bilayer":
+        # E26 — 두 층 구조는 외형이 상자라 상자 안에서 균등하게 뽑는다. 영률은 점마다(`young_at`)이므로 계면의 불연속은
+        # 몬테카를로 추정의 편향이 되지 않는다(합성 Gauss가 필요했던 것은 고정 절점이 계면을 가로질러서다).
+        hi = np.array([g["L"], g["b"], g["h"]], dtype=float)
+        pts = torch.as_tensor(rng.uniform(size=(int(n_points), 3)) * hi, device=device)
+        w = torch.full((int(n_points),), float(hi.prod()) / int(n_points), device=device)
+        return pts, w
     if g.get("kind") is not None:
-        raise NotImplementedError("몬테카를로 구적은 균질 상자와 L-브래킷만 지원한다(두 층은 합성 Gauss)")
+        raise NotImplementedError("몬테카를로 구적은 상자·두 층·L·T-브래킷만 지원한다")
     hi = np.array([g["L"], g["b"], g["h"]], dtype=float)
     pts = torch.as_tensor(rng.uniform(size=(int(n_points), 3)) * hi, device=device)
     vol = float(hi.prod())
@@ -111,25 +129,95 @@ class _VecMLP3D(nn.Module):
         return self.net(xyz)
 
 
+class _FourierVecMLP3D(nn.Module):
+    """N: R³ → R³에 무작위 Fourier 특징을 앞에 붙인 판(E23, Wang 외 2021의 방식).
+
+    γ(x) = [sin 2πBx, cos 2πBx], B ~ N(0, σ²)는 학습하지 않는 고정 행렬이다. 파라미터·버퍼가 아닌 속성으로
+    두므로 `stack_module_state`·`functional_call`이 건드리지 않고, 전 시드가 같은 B를 본다."""
+
+    def __init__(self, width: int, depth: int, B: torch.Tensor):
+        super().__init__()
+        self.B = B
+        layers = [nn.Linear(2 * int(B.shape[0]), width), nn.Tanh()]
+        for _ in range(depth - 1):
+            layers += [nn.Linear(width, width), nn.Tanh()]
+        layers += [nn.Linear(width, 3)]
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, xyz):
+        z = 2.0 * np.pi * (xyz @ self.B.T)
+        return self.net(torch.cat([torch.sin(z), torch.cos(z)], dim=-1))
+
+
+def fourier_matrix(fourier: dict, device) -> torch.Tensor:
+    """E23 — Fourier 특징의 고정 행렬 B (features, 3). 전용 생성기에서 뽑아 망 초기화의 전역 난수를 건드리지 않는다."""
+    gen = torch.Generator(device="cpu").manual_seed(int(fourier["seed"]))
+    B = torch.randn(int(fourier["features"]), 3, generator=gen, dtype=torch.float64)
+    return (float(fourier["sigma"]) * B).to(device)
+
+
 class EnsembleVecMLP3D:
-    """시드별 파라미터를 배치로 쌓아 vmap 한 번에 전 시드를 학습한다(P1·P4와 같다)."""
+    """시드별 파라미터를 배치로 쌓아 vmap 한 번에 전 시드를 학습한다(P1·P4와 같다).
+
+    `fourier`(E23)를 주면 입력에 고정 Fourier 특징을 붙인 망이다. 기본값 None이면 커밋된 망 그대로다."""
 
     def __init__(self, n_seeds: int, width: int = 64, depth: int = 4,
-                 seed: int = 0, device: str | None = None):
+                 seed: int = 0, device: str | None = None, fourier: dict | None = None):
         torch.set_default_dtype(torch.float64)
         dev = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        B = None if fourier is None else fourier_matrix(fourier, dev)
+        make = ((lambda: _VecMLP3D(width, depth)) if B is None
+                else (lambda: _FourierVecMLP3D(width, depth, B)))
         torch.manual_seed(seed)
-        models = [_VecMLP3D(width, depth).to(dev) for _ in range(n_seeds)]
+        models = [make().to(dev) for _ in range(n_seeds)]
         self.params, _ = stack_module_state(models)
-        self.base = _VecMLP3D(width, depth).to(dev).to("meta")
+        self.base = make().to(dev).to("meta")
         self.n_seeds, self.width, self.depth, self.device = n_seeds, width, depth, dev
+        self.fourier = None if fourier is None else dict(fourier)
 
     def disclosure(self) -> dict:
         n = sum(v[0].numel() for v in self.params.values())
         return {"width": self.width, "depth": self.depth, "activation": "tanh",
                 "n_params_per_seed": int(n), "n_seeds": self.n_seeds,
+                **({} if self.fourier is None else {"fourier_features": self.fourier}),
                 "ansatz": "u = x * N(x,y,z); the clamped face x = 0 is satisfied "
                           "exactly by construction, not by a penalty"}
+
+
+class MixedStoredStage:
+    """E27 — 시드마다 다른 경로에서 고른 저장 단계(학습하지 않는다). 구성 요소마다 (앙상블, 망이 보는 좌표의 축척,
+    시드 번호 목록)을 들고, 상태는 구성 요소마다 그 시드들에서만 계산해 시드 자리에 붙인다. 경로가 다르면 망 구조
+    (Fourier 특징)와 입력 축척(정규화 좌표)이 다르므로 한 앙상블로 담을 수 없다. 시드 목록은 0..n_seeds−1을 정확히
+    한 번씩 덮어야 한다. 이 형식의 저장 단계는 실행의 축척(`normalize_input`)을 따르지 않고 제 축척을 쓴다."""
+
+    def __init__(self, components):
+        comps = []
+        seen = []
+        for ens, scale, seeds in components:
+            idx = [int(v) for v in seeds]
+            if idx:
+                comps.append((ens, scale, idx))
+                seen += idx
+        if not comps:
+            raise ValueError("구성 요소가 없다")
+        n = int(comps[0][0].n_seeds)
+        if any(int(e.n_seeds) != n for e, _, _ in comps):
+            raise ValueError("구성 요소의 시드 수가 다르다")
+        if sorted(seen) != list(range(n)):
+            raise ValueError(f"시드 목록이 0..{n - 1}을 정확히 한 번씩 덮지 않는다: {sorted(seen)}")
+        self.components, self.n_seeds = comps, n
+
+    def states(self, points, dist=None, geom=None):
+        """전 시드의 상태 (n_seeds, 12, n_q) — 구성 요소마다 제 시드에서만 계산한다."""
+        out = None
+        for ens, scale, idx in self.components:
+            sel = torch.as_tensor(idx, device=points.device)
+            sub = {k: v.index_select(0, sel) for k, v in ens.params.items()}
+            st = vmap(lambda p, e=ens, c=scale: _state_one(p, e.base, points, c, dist, geom))(sub)
+            if out is None:
+                out = torch.zeros((self.n_seeds,) + tuple(st.shape[1:]), dtype=st.dtype, device=st.device)
+            out[sel] = st
+        return out
 
 
 # 하드 BC의 거리함수. 커밋된 실행은 `clamped_x0`이며 기본값이다(E13-b가 둘째를 더한다).
@@ -189,6 +277,9 @@ def input_scale(g) -> tuple:
     (L, b + a, h)다. 망이 보는 좌표만 나누므로 하드 BC는 물리 좌표 그대로 정확하다."""
     if g.get("kind") == "L":
         return (float(g["L"]), float(g["b"]) + float(g["a"]), float(g["h"]))
+    if g.get("kind") == "T":
+        # E25 — 외접 상자 (L, b + 2a, h). 날개가 y < 0에 걸쳐 있어 나눈 좌표의 y는 [−a, b + a]/(b + 2a)다.
+        return (float(g["L"]), float(g["b"]) + 2.0 * float(g["a"]), float(g["h"]))
     return (float(g["L"]), float(g["b"]), float(g["h"]))
 
 def rq_from_state(S, w, nu: float, E: float = 1.0, rho: float = 1.0):
@@ -391,7 +482,8 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
                     storage: str = "raw", batch_diag: bool = False,
                     ladder_chunk: int | None = None, stored=None,
                     stored_iters: int | None = None, on_checkpoint=None,
-                    checkpoint_every: int | None = None) -> dict:
+                    checkpoint_every: int | None = None, lr_milestones=None,
+                    fourier: dict | None = None, init_seed_offset: int = 0) -> dict:
     """3D 블록의 최저 n_modes개 Λ를 순차 Rayleigh 최소화로 푼다.
 
     `projection`은 P1·P4와 같은 세 규칙이다. P5가 묻는 것은 raw 저장 스팬이 질량-직교
@@ -428,7 +520,15 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
     심는 시드)·표본 순서·사영이 순차 풀이와 같다(시험). 저장 단계의 감사 격자 값·형상도 순차 풀이와 같게 다시
     잰다. 새 단계는 `width`·`depth`를 따르고 저장된 망은 제 크기 그대로다. `on_checkpoint`는 곁가지다 —
     학습 중인 단계에서 `checkpoint_every`회마다(마지막 반복 제외) 파라미터의 호스트 사본만 넘긴다. 셋 다
-    기본값이면 커밋된 경로 그대로다."""
+    기본값이면 커밋된 경로 그대로다.
+
+    `lr_milestones`(E23)는 학습률 감소 시점을 반복 수로 못 박는다(MultiStepLR, γ = 0.4 그대로). 기본값 None이면
+    커밋된 StepLR(주기 iters // 3)이다 — 감소 시점이 같으면 두 경로의 학습률 열은 같다(시험). `fourier`(E23)는
+    학습하는 단계의 망에 고정 Fourier 특징을 붙인다(저장된 망은 제 구조 그대로). 둘 다 기본값이면 커밋된 경로다.
+
+    E27: `stored`의 원소가 `MixedStoredStage`이면 시드마다 다른 경로의 망을 저장 단계로 둔다(제 축척으로 잰다).
+    `init_seed_offset`은 학습하는 단계의 초기화 난수(seed·1000 + 단계)에 더하는 값이다 — 재초기화 경로. 기본값 0이면
+    커밋된 초기화다."""
     if storage not in STORAGE:
         raise ValueError(f"storage는 {STORAGE} 중 하나여야 합니다: {storage!r}")
     if mc_points and not resample_every:
@@ -485,10 +585,14 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
         저장된 값을 다른 격자에 그대로 쓰면 사영이 그 격자에서 직교를 만들지 못해
         deflation이 조용히 무력해진다 — 훈련·감사 어느 쪽으로 옮기든 마찬가지다."""
         with torch.no_grad():
-            raw = tuple(
-                vmap(lambda p, e=e_: _state_one(p, e.base, points, sc, dist, g))(e_.params).detach()
-                for e_ in ensembles[:upto])
+            raw = tuple(_ens_states(e_, points).detach() for e_ in ensembles[:upto])
             return raw if storage == "raw" else _orthogonalized(raw)
+
+    def _ens_states(e_, points):
+        """앙상블 하나의 전 시드 상태. E27의 혼합 저장 단계는 구성 요소마다 제 축척으로 잰다."""
+        if isinstance(e_, MixedStoredStage):
+            return e_.states(points, dist, g)
+        return vmap(lambda p, e=e_: _state_one(p, e.base, points, sc, dist, g))(e_.params)
 
     def _orthogonalized(raw):
         """û_i = R_i − Σ_{j<i} c_ij û_j — 계수는 감사 격자에서 고정한 값(시드별)."""
@@ -504,13 +608,17 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
         if k < n_stored:
             ens = stored[k]          # E21h — 저장된 망, 학습하지 않는다
         else:
-            ens = EnsembleVecMLP3D(n_seeds, width, depth, seed=seed * 1000 + k,
-                                   device=dev)
+            ens = EnsembleVecMLP3D(n_seeds, width, depth, seed=seed * 1000 + k + int(init_seed_offset),
+                                   device=dev, fourier=fourier)
             # `stack_module_state`가 돌려주는 텐서를 **그대로** 최적화한다. clone()을 끼우면
             # non-leaf가 되어 Adam이 거부한다(P4와 같은 처리).
             opt = torch.optim.Adam(list(ens.params.values()), lr=lr)
-            sched = torch.optim.lr_scheduler.StepLR(
-                opt, step_size=max(iters // 3, 1), gamma=0.4)
+            if lr_milestones is None:
+                sched = torch.optim.lr_scheduler.StepLR(
+                    opt, step_size=max(iters // 3, 1), gamma=0.4)
+            else:
+                sched = torch.optim.lr_scheduler.MultiStepLR(
+                    opt, milestones=[int(v) for v in lr_milestones], gamma=0.4)
         proj = PROJECTIONS[projection]
 
         def loss_audit(p, *prev):
@@ -541,7 +649,9 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
         if k < n_stored and resample_every:
             # E21h — 저장 단계가 `stored_iters`회 학습하며 뽑았을 표본만큼 난수를 넘긴다(아래 학습 루프의
             # 재표집과 같은 시점들). 마지막 표본은 그 단계의 훈련 격자 Λ를 재는 데 쓴다.
-            for _it in range(0, int(stored_iters), resample_every):
+            # E25: `stored_iters`가 목록이면 저장 단계마다의 반복 수다(4배 일정으로 다시 푼 단계 뒤를 이어 풀 때).
+            si = stored_iters[k] if isinstance(stored_iters, (list, tuple)) else stored_iters
+            for _it in range(0, int(si), resample_every):
                 if mc_points:
                     cur_pts, cur_w = mc_quadrature(mc_points, rng, dev, g)
                 else:
@@ -604,18 +714,28 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
             batch_off.append(np.mean(tail, axis=0) if tail else np.full(n_seeds, np.nan))
 
         with torch.no_grad():
-            lam.append(vmap(loss_audit)(ens.params, *audit_stack).cpu().numpy().copy())
-            # 훈련 격자에서 잰 값도 남긴다 — 두 격자가 실제로 갈라졌는지 확인 가능해야
-            # 분리가 일어났다는 주장이 검증된다(v2 §4.1).
-            def _loss_train(p, *prev):
-                S = _state_one(p, ens.base, cur_pts, sc, dist, g)
-                if prev:
-                    S = proj(S, torch.stack(prev, 0), cur_w)
-                return rq_from_state(S, cur_w, nu, E_cur, rho)
-            lam_train.append(vmap(_loss_train)(ens.params, *cur_stack)
-                             .cpu().numpy().copy())
+            if isinstance(ens, MixedStoredStage):
+                # E27 — 혼합 저장 단계는 상태에서 바로 잰다(구성 요소마다 제 망·축척).
+                def _rq_states(S_all, stack, w_, E_):
+                    return vmap(lambda s_, *q: rq_from_state(
+                        proj(s_, torch.stack(q, 0), w_) if q else s_, w_, nu, E_, rho))(S_all, *stack)
+                S_raw = ens.states(pts_a, dist, g)
+                lam.append(_rq_states(S_raw, audit_stack, w_a, E_a).cpu().numpy().copy())
+                lam_train.append(_rq_states(ens.states(cur_pts, dist, g), cur_stack, cur_w, E_cur)
+                                 .cpu().numpy().copy())
+            else:
+                lam.append(vmap(loss_audit)(ens.params, *audit_stack).cpu().numpy().copy())
+                # 훈련 격자에서 잰 값도 남긴다 — 두 격자가 실제로 갈라졌는지 확인 가능해야
+                # 분리가 일어났다는 주장이 검증된다(v2 §4.1).
+                def _loss_train(p, *prev):
+                    S = _state_one(p, ens.base, cur_pts, sc, dist, g)
+                    if prev:
+                        S = proj(S, torch.stack(prev, 0), cur_w)
+                    return rq_from_state(S, cur_w, nu, E_cur, rho)
+                lam_train.append(vmap(_loss_train)(ens.params, *cur_stack)
+                                 .cpu().numpy().copy())
 
-            S_raw = vmap(lambda p: _state_one(p, ens.base, pts_a, sc, dist, g))(ens.params)
+                S_raw = vmap(lambda p: _state_one(p, ens.base, pts_a, sc, dist, g))(ens.params)
             m0 = (w_a * (S_raw[:, :3] ** 2).sum(dim=1)).sum(dim=-1)
             if audit_stack:
                 S_pr = vmap(lambda s_, *q: proj(s_, torch.stack(q, 0), w_a))(
@@ -683,12 +803,10 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
             with torch.no_grad():
                 prev2, chk = [], []
                 if ladder_chunk is None:
-                    raw2 = [vmap(lambda p, e=e: _state_one(p, e.base, pts2, sc, dist, g))(e.params)
-                            for e in ensembles]
+                    raw2 = [_ens_states(e, pts2) for e in ensembles]
                 else:
-                    raw2 = [torch.cat([vmap(lambda p, e=e, c=c: _state_one(p, e.base, c, sc, dist, g))(
-                        e.params) for c in torch.split(pts2, int(ladder_chunk))], dim=-1)
-                        for e in ensembles]
+                    raw2 = [torch.cat([_ens_states(e, c) for c in torch.split(pts2, int(ladder_chunk))], dim=-1)
+                            for e in ensembles]
                 stored2 = raw2 if storage == "raw" else list(_orthogonalized(tuple(raw2)))
                 for i2, S2 in enumerate(raw2):
                     if prev2:
@@ -716,7 +834,8 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
             # 망 파라미터. E7이 480셀 재측정에 77 GPU-시간을 쓴 것은 이것을 남기지
             # 않았기 때문이다 — 재현이 비트 단위임은 E4·E6·E7이 보였으므로, 남겨 두면
             # 같은 일이 순전파 비용이 된다. 기본 꺼짐(용량이 arm당 약 64 MB).
-            "params": ([{k: v.detach().cpu().numpy() for k, v in e.params.items()}
+            "params": ([{} if isinstance(e, MixedStoredStage)
+                        else {k: v.detach().cpu().numpy() for k, v in e.params.items()}
                         for e in ensembles] if return_params else None),
             "lam_ladder": lam_ladder,          # (n_seeds, n_modes, 1 + 사다리 칸)
             "check_grids": None if not rungs else (audit_eff,) + tuple(rungs),
@@ -738,6 +857,8 @@ def solve_p5_neural(n_modes: int = 6, n_seeds: int = 20, iters: int = 20000,
             "batch_offdiag": (np.stack(batch_off, axis=1) if batch_diag else None),
             "n_seeds": n_seeds, "iters": iters, "grid": tuple(int(v) for v in grid),
             "n_stored": n_stored, "stored_iters": stored_iters,
+            "lr_milestones": None if lr_milestones is None else [int(v) for v in lr_milestones],
+            "fourier": None if fourier is None else dict(fourier),
             "n_q": int(len(w)), "width": width, "depth": depth,
             "bc": bc,
             "disclosure": {**ens.disclosure(),

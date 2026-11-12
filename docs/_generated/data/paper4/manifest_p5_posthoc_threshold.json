@@ -1,0 +1,27 @@
+{
+  "git_sha": "b361d6641774b76846cd10c8d56d8187e967708d",
+  "git_branch": "unknown",
+  "git_dirty": true,
+  "timestamp_utc": "2026-11-08T03:47:30.658381+00:00",
+  "python": "3.12.3",
+  "numpy": "2.5.0",
+  "scipy": "1.18.0",
+  "mpmath": "1.3.0",
+  "platform": "Linux 6.17.0-1026-nvidia aarch64",
+  "precision": "fp64 + mpmath dps=50",
+  "driver": "p5_posthoc.threshold_main",
+  "reads": "p5_neural_*_records.jsonl and the E28/E30/E31 selections",
+  "thresholds": [
+    0.0,
+    0.01,
+    0.02,
+    0.03,
+    0.05
+  ],
+  "output": "p5_posthoc_threshold.json",
+  "launch": {
+    "git_sha": "b361d6641774b76846cd10c8d56d8187e967708d",
+    "git_dirty": false,
+    "timestamp_utc": "2026-11-08T03:47:30.639855+00:00"
+  }
+}

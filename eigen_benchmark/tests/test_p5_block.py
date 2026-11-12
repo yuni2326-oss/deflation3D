@@ -389,6 +389,56 @@ def test_audit_certification_counts_the_points_the_l_bracket_actually_uses():
     assert row["n_points"] == len(p5._tensor_grid(row["grid"], L_GEO)[1]) == 6336
 
 
+# ── T-브래킷(E25) — 상자 넷의 합집합 ─────────────────────────────────────────
+
+T_GEO = {"kind": "T", "L": 1.0, "b": 0.2, "h": 0.1, "a": 0.25, "E": 1.0, "rho": 1.0, "nu": 0.29}
+T_VOL = (T_GEO["L"] * T_GEO["b"] + 2 * T_GEO["b"] * T_GEO["a"]) * T_GEO["h"]
+
+
+def test_t_bracket_mesh_merges_the_shared_faces_and_carries_the_t_volume():
+    """줄기·접합·두 날개를 각자 구조격자로 만들고 경계면 절점을 합친다. 날개는 y < 0과 y > b 양쪽에 붙는다."""
+    m = p5.build_mesh(20, 4, 2, T_GEO)
+    assert m["elems"].shape == ((16 * 4 + 4 * 4 + 2 * 4 * 5) * 2, 27)
+    key = np.round(m["nodes"], 12)
+    assert len(np.unique(key, axis=0)) == len(key)
+    assert m["nodes"][:, 1].min() == pytest.approx(-0.25) and m["nodes"][:, 1].max() == pytest.approx(0.45)
+    K, M = p5.assemble(m, T_GEO)
+    assert float(M[0::3, 0::3].sum()) == pytest.approx(T_VOL, rel=1e-12)
+    with pytest.raises(ValueError):
+        p5.build_mesh(20, 4, 2, {**T_GEO, "a": 0.26})      # 날개가 요소 크기의 정수배가 아니다
+
+
+def test_t_bracket_tensor_grid_integrates_low_order_polynomials_exactly():
+    pts, w = p5._tensor_grid((12, 6, 6), T_GEO)
+    L, b, h, a = (T_GEO[k] for k in ("L", "b", "h", "a"))
+    assert w.sum() == pytest.approx(T_VOL, rel=1e-13)
+    # ∫ y dV — 줄기·접합은 b²/2씩(폭 방향 [0, b]), 두 날개는 −a²/2와 (b + a)² − b²)/2, 각각 길이·두께를 곱한다.
+    want = h * ((L - b) * b ** 2 / 2 + b * b ** 2 / 2 + b * (-a ** 2 / 2) + b * ((b + a) ** 2 - b ** 2) / 2)
+    assert float(w @ pts[:, 1]) == pytest.approx(want, rel=1e-12)
+    stem = pts[:, 0] < L - b
+    assert ((pts[stem, 1] >= 0) & (pts[stem, 1] <= b)).all()
+    # 날개의 길이 방향은 max(nW, ⌈nL·a⌉) = max(6, 3) = 6점 — 접합 블록과 같은 해상도
+    assert p5._tensor_grid((12, 6, 6), T_GEO)[1].shape[0] == 10 * 6 * 6 + 6 * 6 * 6 + 2 * 6 * 6 * 6
+    assert p5._tensor_grid((40, 6, 6), T_GEO)[1].shape[0] == 32 * 6 * 6 + 6 * 6 * 6 + 2 * 6 * 10 * 6
+
+
+def test_t_bracket_point_evaluation_interpolates_the_nodes_on_both_flanges():
+    m = p5.build_mesh(20, 4, 2, T_GEO)
+    rng = np.random.default_rng(1)
+    v = rng.normal(size=3 * len(m["nodes"]))
+    idx = np.concatenate([np.flatnonzero(m["nodes"][:, 1] < -0.1)[:10],
+                          np.flatnonzero(m["nodes"][:, 1] > 0.3)[:10],
+                          rng.choice(len(m["nodes"]), size=20, replace=False)])
+    got = p5.eval_mode_at(m, v, m["nodes"][idx])
+    assert np.allclose(got, v.reshape(-1, 3)[idx], atol=1e-12)
+
+
+def test_t_bracket_eigenvalues_fall_under_refinement_and_are_ritz_bounds():
+    coarse = p5.solve(20, 4, 2, n_modes=4, geometry=T_GEO)["lam"]
+    fine = p5.solve(40, 8, 4, n_modes=4, geometry=T_GEO)["lam"]
+    assert (fine <= coarse * (1 + 1e-12)).all() and (np.diff(fine) >= 0).all()
+
+
 # ── E22 두 층 이종재료 ─────────────────────────────────────────────────────────
 BI_GEO = {"kind": "bilayer", "L": 1.0, "b": 0.2, "h": 0.1, "E": 1.0, "E_top": 0.1,
           "rho": 1.0, "nu": 0.29}

@@ -1,0 +1,80 @@
+{
+  "git_sha": "bdb2658ad087ede77403c14000027d6cb8520aef",
+  "git_branch": "master",
+  "git_dirty": true,
+  "timestamp_utc": "2026-10-29T21:47:11.114603+00:00",
+  "python": "3.12.3",
+  "numpy": "2.1.0",
+  "scipy": "1.17.1",
+  "mpmath": "1.3.0",
+  "platform": "Linux 6.17.0-1026-nvidia aarch64",
+  "precision": "fp64 + mpmath dps=50",
+  "driver": "run_p5.structure_reference",
+  "tag": "e13b_clamped2_m8",
+  "launch": {
+    "git_sha": "bdb2658ad087ede77403c14000027d6cb8520aef",
+    "git_dirty": true,
+    "timestamp_utc": "2026-10-29T21:44:59.169630+00:00"
+  },
+  "geometry": {
+    "L": 1.0,
+    "b": 0.2,
+    "h": 0.04,
+    "E": 1.0,
+    "rho": 1.0,
+    "nu": 0.29
+  },
+  "faces": "two_face",
+  "ladder": [
+    [
+      12,
+      4,
+      2
+    ],
+    [
+      24,
+      8,
+      4
+    ],
+    [
+      48,
+      16,
+      8
+    ]
+  ],
+  "cert_grid": [
+    16,
+    8,
+    8
+  ],
+  "n_modes": 8,
+  "n_used": 6,
+  "clusters": [
+    [
+      1
+    ],
+    [
+      2
+    ],
+    [
+      3
+    ],
+    [
+      4
+    ],
+    [
+      5
+    ],
+    [
+      6
+    ],
+    [
+      7
+    ],
+    [
+      8
+    ]
+  ],
+  "worst_extrapolation_residual": 0.00138014493707647,
+  "worst_shape_cert": 0.9998899419522597
+}

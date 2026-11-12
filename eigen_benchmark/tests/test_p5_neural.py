@@ -786,9 +786,10 @@ def test_solve_reports_the_audit_quotient_with_the_layer_moduli():
     assert np.allclose(lam.numpy(), out["lam"][:, 0], rtol=1e-12, atol=0)
 
 
-def test_monte_carlo_refuses_the_bilayer():
+def test_monte_carlo_refuses_an_unknown_kind():
+    """E26부터 두 층은 균등 몬테카를로를 받는다(`test_two_layer_monte_carlo_is_uniform_over_the_box`). 모르는 구조는 거부한다."""
     with pytest.raises(NotImplementedError):
-        p5n.mc_quadrature(100, np.random.default_rng(0), "cpu", BI)
+        p5n.mc_quadrature(100, np.random.default_rng(0), "cpu", {**BI, "kind": "cylinder"})
 
 
 # ── E21e (2026-10-09): 사다리를 점 묶음으로 ───────────────────────────────────
@@ -901,3 +902,201 @@ def test_checkpoints_report_the_parameters_without_touching_the_path():
         np.testing.assert_array_equal(x, y)
     assert [(c["mode"], c["it"]) for c in seen] == [(1, 2), (1, 4), (2, 2), (2, 4)]
     assert all(isinstance(v, np.ndarray) for c in seen for v in c["params"].values())
+
+
+# ── E23 — 감소 시점을 못 박은 학습률 일정과 Fourier 특징 (사전규정 2026-10-17-p5-e23-prespecification.md) ──
+
+def test_fixed_milestones_reproduce_the_committed_step_schedule_when_they_coincide():
+    """`lr_milestones`가 StepLR의 감소 시점(iters // 3의 배수)과 같으면 학습률 열이 같으므로 모든 출력이 비트 단위로 같다.
+    E23 lowtail의 첫 19,998회가 E21g-mc 모드 6 단계와 같은 경로라는 설계 근거다."""
+    kw = dict(n_modes=2, n_seeds=2, iters=9, width=8, depth=2, snapshot_every=1, device="cpu",
+              grid=(6, 4, 3), audit_grid=(8, 5, 4), resample_every=2, family_axes=((6, 7), (4,), (3,)))
+    base = p5n.solve_p5_neural(**kw)
+    fixed = p5n.solve_p5_neural(**kw, lr_milestones=(3, 6))
+    for key in ("lam", "lam_train", "projected_mass_fraction"):
+        assert np.array_equal(base[key], fixed[key]), key
+    assert all(np.array_equal(a, b) for a, b in zip(base["hist"], fixed["hist"]))
+    assert base["lr_milestones"] is None and fixed["lr_milestones"] == [3, 6]
+    later = p5n.solve_p5_neural(**{**kw, "iters": 12}, lr_milestones=(3, 6))
+    assert not np.array_equal(later["lam"], base["lam"])       # 마지막 감소가 없으니 뒤가 달라진다
+
+
+def test_fourier_features_are_a_fixed_matrix_that_leaves_the_initialization_stream_alone():
+    """B는 전용 생성기에서 뽑는다 — 같은 설정이면 같은 B이고 전역 난수 상태를 건드리지 않는다(망 초기화는 시드만
+    따른다). 첫 층의 입력은 sin·cos 두 벌이고, 기본값(None)은 커밋된 망이다."""
+    ff = {"features": 5, "sigma": 1.0, "seed": 7}
+    torch.manual_seed(11)
+    before = torch.get_rng_state()
+    B1, B2 = p5n.fourier_matrix(ff, "cpu"), p5n.fourier_matrix(ff, "cpu")
+    assert torch.equal(before, torch.get_rng_state())
+    assert B1.shape == (5, 3) and torch.equal(B1, B2)
+    plain = p5n.EnsembleVecMLP3D(2, width=8, depth=2, seed=3, device="cpu")
+    four = p5n.EnsembleVecMLP3D(2, width=8, depth=2, seed=3, device="cpu", fourier=ff)
+    again = p5n.EnsembleVecMLP3D(2, width=8, depth=2, seed=3, device="cpu", fourier=ff)
+    assert tuple(four.params["net.0.weight"].shape) == (2, 8, 10)
+    assert tuple(plain.params["net.0.weight"].shape) == (2, 8, 3)
+    assert all(torch.equal(four.params[k], again.params[k]) for k in four.params)
+    assert four.disclosure()["fourier_features"] == ff and "fourier_features" not in plain.disclosure()
+    face = torch.zeros(4, 3, dtype=torch.float64)
+    face[:, 2] = torch.linspace(0, 0.04, 4)
+    assert float(p5n.state_batch(four, face)[:, :3].abs().max()) < 1e-300      # 하드 BC는 그대로
+
+
+def test_a_fourier_stage_trains_after_plain_stored_modes():
+    """저장된 망은 제 구조 그대로 두고 학습하는 단계만 Fourier 망이다(E23 fourier = E21g-mc 모드 1–5 + 새 단계)."""
+    kw = dict(n_seeds=2, iters=6, width=8, depth=2, snapshot_every=2, device="cpu", grid=(6, 4, 3),
+              audit_grid=(8, 5, 4), resample_every=2, family_axes=((6, 7), (4,), (3,)))
+    first = p5n.solve_p5_neural(n_modes=1, **kw, return_params=True)
+    stored = []
+    e = p5n.EnsembleVecMLP3D(2, width=8, depth=2, seed=0, device="cpu")
+    for k_, v in first["params"][0].items():
+        e.params[k_] = torch.as_tensor(v)
+    stored.append(e)
+    out = p5n.solve_p5_neural(n_modes=2, **kw, stored=stored, stored_iters=6,
+                              fourier={"features": 4, "sigma": 1.0, "seed": 1})
+    assert out["lam"].shape == (2, 2) and np.isfinite(out["lam"]).all()
+    assert np.array_equal(out["lam"][:, 0], first["lam"][:, 0])
+    assert out["fourier"] == {"features": 4, "sigma": 1.0, "seed": 1}
+    assert out["disclosure"]["fourier_features"]["features"] == 4
+
+
+
+# ── T-브래킷(E25) ──────────────────────────────────────────────────────────────
+T_GEO = {"kind": "T", "L": 1.0, "b": 0.2, "h": 0.1, "a": 0.25, "E": 1.0, "rho": 1.0, "nu": 0.29}
+
+
+def test_t_bracket_monte_carlo_is_uniform_over_the_four_boxes_and_inside_the_t():
+    """상자 넷을 부피에 비례해 고르고 그 안에서 균등하게 뽑는다 — 가중의 합이 부피, 점은 모두 T 안이다."""
+    rng = np.random.default_rng(0)
+    pts, w = p5n.mc_quadrature(4000, rng, "cpu", T_GEO)
+    P = pts.numpy()
+    assert float(w.sum()) == pytest.approx((1.0 * 0.2 + 2 * 0.2 * 0.25) * 0.1, rel=1e-12)
+    stem = P[:, 0] < 0.8
+    assert ((P[stem, 1] >= 0) & (P[stem, 1] <= 0.2)).all()
+    assert ((P[:, 1] >= -0.25) & (P[:, 1] <= 0.45) & (P[:, 2] >= 0) & (P[:, 2] <= 0.1)).all()
+    flanges = (P[:, 1] < 0) | (P[:, 1] > 0.2)
+    assert abs(flanges.mean() - 0.01 / 0.03) < 0.03          # 날개 부피 비 1/3
+    assert p5n.input_scale(T_GEO) == (1.0, 0.7, 0.1)
+    q, wq = p5n.quadrature((12, 6, 6), "cpu", T_GEO)
+    assert float(wq.sum()) == pytest.approx(0.03, rel=1e-13)
+
+
+
+def test_stored_stages_can_advance_the_sample_stream_by_their_own_iteration_counts(monkeypatch):
+    """E25 — 4배 일정으로 다시 푼 단계 뒤를 이어 풀 때 저장 단계마다 반복 수가 다르다. 목록이면 단계마다 그만큼 표본을 넘긴다."""
+    calls = []
+    real = p5n.mc_quadrature
+    monkeypatch.setattr(p5n, "mc_quadrature", lambda *a, **k: calls.append(1) or real(*a, **k))
+    e = p5n.EnsembleVecMLP3D(1, width=4, depth=1, seed=0, device="cpu")
+    kw = dict(n_modes=3, n_seeds=1, iters=2, width=4, depth=1, device="cpu", grid=(6, 4, 3),
+              audit_grid=(6, 4, 3), resample_every=1, mc_points=9)
+    p5n.solve_p5_neural(**kw, stored=[e, e], stored_iters=[3, 6])
+    assert len(calls) == 3 + 6 + 2
+    calls.clear()
+    p5n.solve_p5_neural(**kw, stored=[e, e], stored_iters=3)
+    assert len(calls) == 3 + 3 + 2
+
+
+def test_two_layer_monte_carlo_is_uniform_over_the_box():
+    """E26 — 두 층 구조의 몬테카를로는 상자 안에서 균등하다(영률은 점마다 다시 매긴다)."""
+    g = {"kind": "bilayer", "L": 1.0, "b": 0.2, "h": 0.1, "E": 1.0, "E_top": 0.1, "rho": 1.0, "nu": 0.29}
+    pts, w = p5n.mc_quadrature(3000, np.random.default_rng(2), "cpu", g)
+    P = pts.numpy()
+    assert float(w.sum()) == pytest.approx(0.02, rel=1e-12)
+    assert (P.min(0) >= 0).all() and (P.max(0) <= [1.0, 0.2, 0.1]).all()
+    assert abs((P[:, 2] < 0.05).mean() - 0.5) < 0.03
+    E = p5n.young_at(pts, g)
+    assert set(np.unique(E.numpy())) == {0.1, 1.0}
+
+
+# ── E27 — 시드마다 다른 경로에서 고른 저장 단계와 재초기화 (사전규정 2026-10-23-p5-e27-prespecification.md) ──
+
+E27_KW = dict(n_seeds=2, iters=6, width=8, depth=2, snapshot_every=2, device="cpu", grid=(6, 4, 3),
+              audit_grid=(8, 5, 4), mc_points=30, resample_every=1, projection="exact")
+
+
+def _ens_from(params, fourier=None, n_seeds=2, width=8, depth=2):
+    e = p5n.EnsembleVecMLP3D(n_seeds, width, depth, seed=0, device="cpu", fourier=fourier)
+    for k_, v in params.items():
+        e.params[k_] = torch.as_tensor(v)
+    return e
+
+
+def test_a_mixed_stored_stage_of_one_source_is_the_plain_stored_stage():
+    """구성 요소가 하나(전 시드, 원좌표)인 혼합 저장 단계는 같은 망의 일반 저장 단계와 같은 결과를 내고, 그것은 순차 풀이와
+    같다. 혼합 단계는 망 파라미터를 내지 않는다(다음 단계는 그 단계를 푼 실행의 파일에서 되살린다)."""
+    seq = p5n.solve_p5_neural(n_modes=2, **E27_KW, return_params=True)
+    e = _ens_from(seq["params"][0])
+    plain = p5n.solve_p5_neural(n_modes=2, **E27_KW, stored=[e], stored_iters=6)
+    mixed = p5n.solve_p5_neural(n_modes=2, **E27_KW, stored=[p5n.MixedStoredStage([(e, None, [0, 1])])],
+                                stored_iters=6, return_params=True)
+    for key in ("lam", "lam_train", "projected_mass_fraction"):
+        np.testing.assert_array_equal(mixed[key], plain[key])
+        np.testing.assert_array_equal(mixed[key], seq[key])
+    np.testing.assert_array_equal(mixed["hist"][1], plain["hist"][1])
+    assert mixed["params"][0] == {} and set(mixed["params"][1]) == set(seq["params"][1])
+
+
+def test_a_mixed_stored_stage_takes_each_seed_from_its_own_source():
+    """시드 0은 원 설정 망, 시드 1은 Fourier 망에서 가져온다 — 시드마다 그 망만 저장한 실행과 같다(시드끼리는 독립이다)."""
+    ff = {"features": 4, "sigma": 1.0, "seed": 1}
+    a = p5n.solve_p5_neural(n_modes=1, **E27_KW, return_params=True)
+    b = p5n.solve_p5_neural(n_modes=1, **E27_KW, return_params=True, fourier=ff)
+    ea, eb = _ens_from(a["params"][0]), _ens_from(b["params"][0], fourier=ff)
+    mixed = p5n.solve_p5_neural(n_modes=2, **E27_KW, stored=[p5n.MixedStoredStage([(ea, None, [0]), (eb, None, [1])])],
+                                stored_iters=6)
+    only_a = p5n.solve_p5_neural(n_modes=2, **E27_KW, stored=[ea], stored_iters=6)
+    only_b = p5n.solve_p5_neural(n_modes=2, **E27_KW, stored=[eb], stored_iters=6)
+    for key in ("lam", "lam_train", "projected_mass_fraction"):
+        np.testing.assert_allclose(mixed[key][0], only_a[key][0], rtol=1e-10)
+        np.testing.assert_allclose(mixed[key][1], only_b[key][1], rtol=1e-10)
+    np.testing.assert_allclose(mixed["lam"][:, 0], [a["lam"][0, 0], b["lam"][1, 0]], rtol=1e-12)
+
+
+def test_a_normalized_component_is_measured_in_its_own_coordinates():
+    """정규화 좌표로 학습한 망은 혼합 단계에서 제 축척으로 잰다 — 원좌표 실행 안에서도 그 망의 감사 Λ가 그대로다.
+    축척을 빼면 다른 함수가 된다."""
+    n = p5n.solve_p5_neural(n_modes=1, **E27_KW, return_params=True, normalize_input=True)
+    e = _ens_from(n["params"][0])
+    sc = torch.tensor(p5n.input_scale(p5n.P5_GEOMETRY))
+    out = p5n.solve_p5_neural(n_modes=2, **E27_KW, stored=[p5n.MixedStoredStage([(e, sc, [0, 1])])], stored_iters=6)
+    np.testing.assert_allclose(out["lam"][:, 0], n["lam"][:, 0], rtol=1e-12)
+    wrong = p5n.solve_p5_neural(n_modes=2, **E27_KW, stored=[p5n.MixedStoredStage([(e, None, [0, 1])])],
+                                stored_iters=6)
+    assert not np.allclose(wrong["lam"][:, 0], n["lam"][:, 0])
+
+
+def test_mixed_stage_seed_lists_must_cover_each_seed_once():
+    e = p5n.EnsembleVecMLP3D(2, 8, 2, seed=0, device="cpu")
+    for comps in ([(e, None, [0])], [(e, None, [0, 0, 1])], [(e, None, [0, 1]), (e, None, [1])], []):
+        with pytest.raises(ValueError):
+            p5n.MixedStoredStage(comps)
+    with pytest.raises(ValueError):          # 구성 요소의 시드 수가 다르면 짝이 깨진다
+        p5n.MixedStoredStage([(e, None, [0]), (p5n.EnsembleVecMLP3D(3, 8, 2, seed=0, device="cpu"), None, [1])])
+    assert p5n.MixedStoredStage([(e, None, [1]), (e, None, [0])]).n_seeds == 2
+
+
+def test_reinit_offset_changes_only_the_new_stage_initialization():
+    """재초기화 경로 — 오프셋 0은 커밋된 초기화이고, 오프셋을 주면 학습하는 단계의 시작만 달라진다(저장 단계는 그대로)."""
+    seq = p5n.solve_p5_neural(n_modes=2, **E27_KW, return_params=True)
+    e = _ens_from(seq["params"][0])
+    zero = p5n.solve_p5_neural(n_modes=2, **E27_KW, stored=[e], stored_iters=6, init_seed_offset=0)
+    np.testing.assert_array_equal(zero["lam"], seq["lam"])
+    moved = p5n.solve_p5_neural(n_modes=2, **E27_KW, stored=[e], stored_iters=6, init_seed_offset=500)
+    np.testing.assert_array_equal(moved["lam"][:, 0], seq["lam"][:, 0])
+    assert not np.array_equal(moved["lam"][:, 1], seq["lam"][:, 1])
+
+
+def test_a_traction_weight_of_one_is_the_committed_strong_form_loss():
+    """E28e — 견인력 가중 1은 커밋된 손실과 비트 단위로 같고, 다른 가중은 학습 경로를 바꾼다. 기록하는 항별 손실은 가중 전 값이다."""
+    from eigen_benchmark.neural import p5_pinn
+    kw = dict(n_modes=1, n_seeds=2, iters=4, width=8, depth=2, snapshot_every=2, device="cpu",
+              audit_grid=(8, 5, 4), resample_every=1, mc_points=30, boundary_points=20)
+    a = p5_pinn.solve_p5_pinn(**kw)
+    b = p5_pinn.solve_p5_pinn(**kw, traction_weight=1.0)
+    c = p5_pinn.solve_p5_pinn(**kw, traction_weight=10.0)
+    np.testing.assert_array_equal(a["lam"], b["lam"])
+    np.testing.assert_array_equal(a["lam_param"], b["lam_param"])
+    assert not np.array_equal(a["lam_param"], c["lam_param"])
+    assert c["weights"]["traction"] == 10.0 and a["weights"]["traction"] == 1.0
+    assert "traction weight 10" in c["disclosure"]["formulation"]

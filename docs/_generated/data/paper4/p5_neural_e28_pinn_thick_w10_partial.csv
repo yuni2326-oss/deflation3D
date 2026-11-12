@@ -1,0 +1,7 @@
+problem,arm,condition,mode,n,iters,invalid_quadrature,correct,lower_mode_basin,spurious,non_converged,p_correct,wilson_lo,wilson_hi,p_invalid,tau,seconds,proj_mass_median,proj_mass_min,audit_grid,width,depth
+P5,"p5_pinn_3d[strong form, orthogonality penalty]",resampled,1,20,20000,0,0,0,20,0,0.0,0.0,0.16112515811625733,0.0,5.0,18458.585598037113,1.0,1.0,30x15x12,128,5
+P5,"p5_pinn_3d[strong form, orthogonality penalty]",resampled,2,20,20000,0,0,18,2,0,0.0,0.0,0.16112515811625733,0.0,5.0,18890.613707270008,0.9999999635195673,0.9999989288337816,30x15x12,128,5
+P5,"p5_pinn_3d[strong form, orthogonality penalty]",resampled,3,20,20000,0,0,0,20,0,0.0,0.0,0.16112515811625733,0.0,5.0,18833.846772700083,0.9999183594973248,0.9980789212129592,30x15x12,128,5
+P5,"p5_pinn_3d[strong form, orthogonality penalty]",resampled,4,20,20000,0,0,0,20,0,0.0,0.0,0.16112515811625733,0.0,5.0,18042.804156578146,0.9999999999278182,0.9999051133191172,30x15x12,128,5
+P5,"p5_pinn_3d[strong form, orthogonality penalty]",resampled,5,20,20000,0,0,20,0,0,0.0,0.0,0.16112515811625733,0.0,5.0,19193.462815416977,0.9999999988176025,0.9997195745603994,30x15x12,128,5
+P5,"p5_pinn_3d[strong form, orthogonality penalty]",resampled,6,20,20000,0,0,0,20,0,0.0,0.0,0.16112515811625733,0.0,5.0,18984.77996930713,0.999987351958445,0.9991340903630652,30x15x12,128,5

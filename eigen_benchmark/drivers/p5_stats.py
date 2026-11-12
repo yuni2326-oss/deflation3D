@@ -976,12 +976,1545 @@ def e21h(data_dir: str = DATA_DIR) -> dict | None:
         return None
     return e21h_from_records(recs["sched_norm"], g_mc, recs["sched_raw"], d_mc, recs["wide_norm"])
 
+
+# E23 — 학습률이 높은 구간을 묶은 일정과 Fourier 특징(사전규정 2026-10-17-p5-e23-prespecification.md). 둘 다
+# E21g-mc의 저장된 모드 1–5에서 모드 6 단계만 다시 풀었다. 주 판정은 lowtail 대 E21g-mc, 보조는 lowtail 대
+# E21h sched_norm(같은 저장 모드, 같은 시드)과 fourier 대 E21g-mc다.
+E23_TAGS = {"lowtail": "e21lb_s6_norm_x4lo", "fourier": "e21lb_s6_norm_ff"}
+
+
+def e23_from_records(recs_lowtail, recs_e21g_mc, recs_sched_norm, recs_fourier,
+                     B: int = B_DEFAULT, seed: int = SEED) -> dict:
+    """세 대비 모두 모드 6의 게이트 없는 정확을 시드끼리 짝지어 비교한다."""
+    def c6(new, base, new_tag, base_tag):
+        a, b = _seed_share(new, accurate, (6,)), _seed_share(base, accurate, (6,))
+        ci = paired_bootstrap(a, b, B, seed)
+        return {"contrast": ci, "verdict": _rule(ci),
+                "acc_6": {new_tag: _n_acc(new, (6,)), base_tag: _n_acc(base, (6,))}}
+    return {"primary": "lowtail",
+            "lowtail": c6(recs_lowtail, recs_e21g_mc, E23_TAGS["lowtail"], E21G_TAGS["mc"]),
+            "lowtail_vs_sched": c6(recs_lowtail, recs_sched_norm, E23_TAGS["lowtail"],
+                                   E21H_TAGS["sched_norm"]),
+            "fourier": c6(recs_fourier, recs_e21g_mc, E23_TAGS["fourier"], E21G_TAGS["mc"])}
+
+
+def e23(data_dir: str = DATA_DIR) -> dict | None:
+    try:
+        lo, ff = (load(data_dir, E23_TAGS[k]) for k in ("lowtail", "fourier"))
+        g_mc, sn = load(data_dir, E21G_TAGS["mc"]), load(data_dir, E21H_TAGS["sched_norm"])
+    except FileNotFoundError:
+        return None
+    return e23_from_records(lo, g_mc, sn, ff)
+
 def e21b(data_dir: str = DATA_DIR) -> dict | None:
     try:
         g1, ex = load(data_dir, E21B_TAG), load(data_dir, E21_TAGS["exact"])
     except FileNotFoundError:
         return None
     return e21b_from_records(g1, ex)
+
+
+# E24 — 강형식 물리정보 arm(사전규정 2026-10-17-p5-e24-prespecification.md). 두 해석기는 같은 초기화·같은 내부 표본을
+# 쓰므로 시드끼리 짝짓는다. 주 판정은 대수 층(저장된 낮은 모드로 돌아간 셀의 몫, 모드 2–6), 보조는 계기 층(사다리 불안정,
+# 모드 4–6)과 최적화 층(모드 6 정확). 판정 구조는 box(파일럿 규칙 P가 바꾸면 thick)와 L-브래킷이다.
+E24_TAGS = {"box": "e24_pinn_box", "thick": "e24_pinn_thick", "lbracket": "e24_pinn_lb"}
+E24_COMPARATOR = {"box": ("e7_ladder_a", "exact", "resampled"), "thick": ("e13a_thick", "exact", "resampled"),
+                  "lbracket": ("e21lb_exact_mc1_norm", None, None)}
+E24_BASIN_MODES = (2, 3, 4, 5, 6)
+
+
+def returned_to_stored(rec, mac_min: float = 0.9) -> bool:
+    """게이트 없는 '저장된 낮은 모드로 돌아감' — 짝 모드가 단계보다 낮고 MAC ≥ 0.9. 하한 위반 셀은 세지 않는다."""
+    return (rec["outcome"] != "invalid_quadrature" and rec["matched_mode"] < rec["mode"]
+            and rec["mac"] >= mac_min)
+
+
+def ladder_unstable(rec) -> bool:
+    s = rec.get("ladder_tail_spread")
+    return s is not None and s > LADDER_RESOLVED
+
+
+def e24_from_records(pinn: dict, var: dict, box_key: str = "box", B: int = B_DEFAULT,
+                     seed: int = SEED) -> dict:
+    """`pinn`·`var`는 {구조: 기록}. 세 층의 대비를 두 구조 모두 계산하고, 판정 구조를 표시한다."""
+    def pair(a_recs, b_recs, pred, modes):
+        a, b = _seed_share(a_recs, pred, modes), _seed_share(b_recs, pred, modes)
+        ci = paired_bootstrap(a, b, B, seed)
+        n = lambda rs: int(sum(pred(r) for r in rs if r["mode"] in modes))
+        return {"contrast": ci, "verdict": _rule(ci), "count": {"strong": n(a_recs), "variational": n(b_recs)},
+                "cells": int(len(a) * len(modes))}
+    out = {"primary": f"algebra@{box_key}", "judged": {"algebra": box_key, "instrument": box_key,
+                                                        "optimization": "lbracket"}}
+    for st, recs in pinn.items():
+        v = var[st]
+        out[st] = {"algebra": pair(recs, v, returned_to_stored, E24_BASIN_MODES),
+                   "instrument": pair(recs, v, ladder_unstable, WALL_MODES),
+                   "optimization": pair(recs, v, accurate, (6,)),
+                   "accurate_by_mode": {m: {"strong": _n_acc(recs, (m,)), "variational": _n_acc(v, (m,))}
+                                        for m in range(1, 7)}}
+    return out
+
+
+def e24(data_dir: str = DATA_DIR) -> dict | None:
+    box_key = "thick" if os.path.exists(os.path.join(data_dir, f"p5_neural_{E24_TAGS['thick']}_records.jsonl")) \
+        else "box"
+    try:
+        pinn = {k: load(data_dir, E24_TAGS[k]) for k in (box_key, "lbracket")}
+        var = {}
+        for k in (box_key, "lbracket"):
+            tag, arm, cond = E24_COMPARATOR[k]
+            var[k] = load(data_dir, tag, arm=None if arm is None else arm_key(arm), condition=cond)
+    except FileNotFoundError:
+        return None
+    return e24_from_records(pinn, var, box_key)
+
+
+# E25 — T-브래킷 전향 적용(사전규정 2026-10-17-p5-e25-prespecification.md). 주 판정은 프로토콜 arm(처방 반영) 대
+# 원 설정 정확 arm의 모드 1–6 게이트 없는 정확, 시드 짝지음. 보조는 원 설정의 정확 − 대각(모드 4–6), 성분 공유 규칙의
+# 시작 모드, 등록 법칙(식 9)의 전이(게이트 없는 정확으로 셈), 처방 단계의 전후. T의 τ는 L에서 빌린 값이라 게이트를 쓰지 않는다.
+E25_TAGS = {"orig_diag": "e25tb_diag", "orig_exact": "e25tb_exact", "protocol": "e25tb_protocol"}
+E25_PREDICTED_ONSET = 4
+E25_ONSET_MAX = 2              # 시작 모드 = 게이트 없는 정확이 2/20 이하로 떨어지는 첫 모드
+
+
+def e25_combine(protocol, remedy=None) -> list:
+    """처방을 반영한 프로토콜 arm의 기록. remedy = (k, 단계 k 기록, 단계 k+1–6 기록 또는 None)."""
+    if remedy is None:
+        return list(protocol)
+    k, step1, step2 = remedy
+    out = [r for r in protocol if r["mode"] < k] + [r for r in step1 if r["mode"] == k]
+    if k < 6:
+        if step2 is None:
+            raise ValueError("k < 6인 처방에는 이어 푼 단계의 기록이 필요하다")
+        out += [r for r in step2 if r["mode"] > k]
+    return out
+
+
+def first_drop_mode(recs, n_max: int = E25_ONSET_MAX):
+    by = {m: _n_acc(recs, (m,)) for m in sorted({r["mode"] for r in recs})}
+    return next((m for m in sorted(by) if by[m] <= n_max), None)
+
+
+def e25_from_records(recs: dict, span_diag, obs14: dict, remedy=None, B: int = B_DEFAULT,
+                     seed: int = SEED) -> dict:
+    """recs = {orig_diag, orig_exact, protocol: 기록}, span_diag = 대각 arm의 시드별 스팬 행."""
+    prot = e25_combine(recs["protocol"], remedy)
+    modes = (1, 2, 3, 4, 5, 6)
+    pa, oa = _seed_share(prot, accurate, modes), _seed_share(recs["orig_exact"], accurate, modes)
+    ci = paired_bootstrap(pa, oa, B, seed)
+    det = paired_bootstrap(_seed_share(recs["orig_exact"], accurate, WALL_MODES),
+                           _seed_share(recs["orig_diag"], accurate, WALL_MODES), B, seed)
+    xs = {k: np.log10(_span_c(span_diag, k)) for k in E21_STAGES}
+    x = np.concatenate([xs[k] for k in E21_STAGES])
+    obs = {k: _n_acc(recs["orig_diag"], (k + 1,)) for k in E21_STAGES}
+    onset = first_drop_mode(recs["orig_diag"])
+    out = {"primary": {"contrast": ci, "verdict": _rule(ci), "modes": list(modes)},
+           "accurate_by_mode": {"protocol": {m: _n_acc(prot, (m,)) for m in modes},
+                                "protocol_first_pass": {m: _n_acc(recs["protocol"], (m,)) for m in modes},
+                                **{a: {m: _n_acc(rs, (m,)) for m in modes} for a, rs in recs.items()
+                                   if a != "protocol"}},
+           "detector": {"contrast": det, "verdict": _rule(det), "modes": list(WALL_MODES)},
+           "onset": {"predicted": E25_PREDICTED_ONSET, "observed": onset,
+                     "hit": bool(onset == E25_PREDICTED_ONSET)},
+           "e14_transfer": e14_transfer(x, sum(obs.values()), obs14, B, seed),
+           "c_median_diag": {k: float(np.median(_span_c(span_diag, k))) for k in E21_STAGES},
+           "train_violations": {a: int(sum(1 for r in rs if r["mode"] >= 3
+                                           and r.get("lam_margin") is not None
+                                           and r["Lam_train"] < r["Lam"] / (1.0 + r["lam_margin"]) * (1 - 1e-6)))
+                                for a, rs in recs.items()},
+           "remedy": None}
+    if remedy is not None:
+        k = remedy[0]
+        a, b = _seed_share(prot, accurate, (k,)), _seed_share(recs["protocol"], accurate, (k,))
+        rc = paired_bootstrap(a, b, B, seed)
+        out["remedy"] = {"stage": int(k), "contrast": rc, "verdict": _rule(rc)}
+    return out
+
+
+def e25(data_dir: str = DATA_DIR) -> dict | None:
+    try:
+        recs = {a: load(data_dir, t) for a, t in E25_TAGS.items()}
+        with open(os.path.join(data_dir, f"p5_span_per_seed_{E25_TAGS['orig_diag']}.csv"), encoding="utf-8") as f:
+            span = list(csv.DictReader(f))
+    except FileNotFoundError:
+        return None
+    remedy = None
+    for k in range(4, 7):
+        p1 = os.path.join(data_dir, f"p5_neural_e25tb_remedy_k{k}_records.jsonl")
+        if os.path.exists(p1):
+            step2 = (load(data_dir, f"e25tb_remedy_k{k}_rest") if k < 6 else None)
+            remedy = (k, load(data_dir, f"e25tb_remedy_k{k}"), step2)
+            break
+    return e25_from_records(recs, span, e14_observations(data_dir), remedy)
+
+
+# E26 — 프로토콜 전/후를 네 구조로(사전규정 2026-10-18-p5-e26-prespecification.md). 구조마다 D = acc₁₋₆(MC 매 반복·정확)
+# − acc₁₋₆(원 설정 정확 arm), 게이트 없는 정확, 시드 짝지음. fourier_raw는 모드 6, E21d 대비. 두 재풀이(fourier_raw,
+# fourier_base)는 재풀이 일관성 검사의 판독량 — 시드별 Λ 상대 감소 (Λ_원 − Λ_재)/Λ_원과 허용오차 0.05를 넘은 시드 수 — 을 같이 적는다.
+E26_TAGS = {"thick": "e26_thick_mc", "clamped2": "e26_cc_mc", "near": "e26_near_mc", "bilayer": "e26_bi_mc",
+            "fourier_raw": "e21lb_s6_raw_ff", "fourier_base": "e15b_s6_raw_ff", "tbracket_raw": "e26_tb_raw_mc"}
+E26_RESOLVE_BASE = {"fourier_raw": "e21lb_exact_mc1", "fourier_base": "e15b"}
+E26_RESOLVE_TOL = 0.05
+E26_ORIGINAL = {"thick": ("e13a_thick", "exact", "resampled"), "clamped2": ("e13b_clamped2", "exact", "resampled"),
+                "near": ("e18_exact", None, None), "bilayer": ("e22bi_exact", None, None)}
+
+
+def resolve_drop(resolved, original, mode: int = 6, tol: float = E26_RESOLVE_TOL) -> dict:
+    """재풀이 일관성 검사의 판독량. 같은 저장 모드에서 다시 푼 단계의 감사 Λ가 원래 단계보다 얼마나 내려갔는가."""
+    a = {int(r["seed"]): r["Lam"] for r in resolved if r["mode"] == mode}
+    b = {int(r["seed"]): r["Lam"] for r in original if r["mode"] == mode}
+    if sorted(a) != sorted(b):
+        raise ValueError(f"재풀이와 원 실행의 시드가 다르다: {sorted(a)} 대 {sorted(b)}")
+    d = np.array([(b[s] - a[s]) / b[s] for s in sorted(a)])
+    return {"drop": d.tolist(), "median": float(np.median(d)), "min": float(d.min()), "max": float(d.max()),
+            "n_above_tol": int((d > tol).sum()), "n_lowered": int((d > 0).sum()), "tol": tol}
+
+
+def e26_tbracket(raw, orig_exact, protocol_norm, B: int = B_DEFAULT, seed: int = SEED) -> dict:
+    """E26d(사전규정 §2.5) — T-브래킷 원좌표 프로토콜. 주: acc₁₋₆(원좌표 프로토콜) − acc₁₋₆(원 설정 정확), 보조: 굽힘 모드
+    1·3에서 acc(원좌표) − acc(정규화 프로토콜, E25), 모드 1·3의 e_λ 중앙(형상이 맞는 셀). 시드 짝지음, 게이트 없는 정확."""
+    modes = (1, 2, 3, 4, 5, 6)
+    a, b = _seed_share(raw, accurate, modes), _seed_share(orig_exact, accurate, modes)
+    main = paired_bootstrap(a, b, B, seed)
+    out = {"contrast": main, "verdict": _rule(main),
+           "accurate_by_mode": {"raw": {m: _n_acc(raw, (m,)) for m in modes},
+                                "orig_exact": {m: _n_acc(orig_exact, (m,)) for m in modes}}}
+    if protocol_norm is not None:
+        a, b = _seed_share(raw, accurate, (1, 3)), _seed_share(protocol_norm, accurate, (1, 3))
+        ci = paired_bootstrap(a, b, B, seed)
+        out["coordinates"] = {"contrast": ci, "verdict": _rule(ci),
+                              "accurate_by_mode_norm": {m: _n_acc(protocol_norm, (m,)) for m in modes}}
+        for name, recs in (("raw", raw), ("norm", protocol_norm)):
+            for m in (1, 3):
+                e = [r["e_lam"] for r in recs if r["mode"] == m and r["matched_mode"] == m and r["mac"] >= 0.9]
+                out["coordinates"][f"e_lam_median_{name}_m{m}"] = float(np.median(e)) if e else None
+    return out
+
+
+def lowest_lambda_pick(runs: dict, mode: int = 6) -> dict:
+    """재풀이 검사의 "낮은 해를 지킨다" 규칙 — 시드마다 여러 풀이 가운데 감사 Λ가 가장 낮은 것을 고른다(참조를 읽지
+    않는 선택). 고른 풀이의 게이트 없는 정확 수와 시드별로 고른 실행 이름을 낸다."""
+    by = {name: {int(r["seed"]): r for r in recs if r["mode"] == mode} for name, recs in runs.items()}
+    seeds = sorted(next(iter(by.values())))
+    if any(sorted(v) != seeds for v in by.values()):
+        raise ValueError("풀이마다 시드가 다르다")
+    pick = {s_: min(by, key=lambda name: by[name][s_]["Lam"]) for s_ in seeds}
+    return {"accurate": int(sum(accurate(by[pick[s_]][s_]) for s_ in seeds)), "n": len(seeds),
+            "picked": {s_: pick[s_] for s_ in seeds},
+            "accurate_each": {name: int(sum(accurate(by[name][s_]) for s_ in seeds)) for name in by}}
+
+
+E26_RAW_PATH = ("e21lb_exact_mc1", "e21lb_s6_raw_x4", "e21lb_s6_raw_ff")
+E26_NORM_PATH = ("e21lb_exact_mc1_norm", "e21lb_s6_norm_x4", "e21lb_s6_norm_x4lo", "e21lb_s6_norm_ff")
+
+
+def e26_from_records(proto: dict, orig: dict, ff_raw=None, e21d=None, B: int = B_DEFAULT, seed: int = SEED,
+                     ff_base=None, e15b=None) -> dict:
+    modes = (1, 2, 3, 4, 5, 6)
+    out = {}
+    for st_, recs in proto.items():
+        a, b = _seed_share(recs, accurate, modes), _seed_share(orig[st_], accurate, modes)
+        ci = paired_bootstrap(a, b, B, seed)
+        out[st_] = {"contrast": ci, "verdict": _rule(ci),
+                    "accurate_by_mode": {"protocol": {m: _n_acc(recs, (m,)) for m in modes},
+                                         "original": {m: _n_acc(orig[st_], (m,)) for m in modes}}}
+    if ff_raw is not None:
+        a, b = _seed_share(ff_raw, accurate, (6,)), _seed_share(e21d, accurate, (6,))
+        ci = paired_bootstrap(a, b, B, seed)
+        out["fourier_raw"] = {"contrast": ci, "verdict": _rule(ci),
+                              "acc_6": {"fourier_raw": _n_acc(ff_raw, (6,)), "e21d": _n_acc(e21d, (6,))},
+                              "resolve": resolve_drop(ff_raw, e21d)}
+    if ff_base is not None:
+        a, b = _seed_share(ff_base, accurate, (6,)), _seed_share(e15b, accurate, (6,))
+        ci = paired_bootstrap(a, b, B, seed)
+        out["fourier_base"] = {"contrast": ci, "verdict": _rule(ci),
+                               "acc_6": {"fourier_base": _n_acc(ff_base, (6,)), "e15b": _n_acc(e15b, (6,))},
+                               "resolve": resolve_drop(ff_base, e15b)}
+    return out
+
+
+def e26(data_dir: str = DATA_DIR) -> dict | None:
+    proto, orig = {}, {}
+    for k in ("thick", "clamped2", "near", "bilayer"):
+        try:
+            proto[k] = load(data_dir, E26_TAGS[k])
+            tag, arm, cond = E26_ORIGINAL[k]
+            orig[k] = load(data_dir, tag, arm=None if arm is None else arm_key(arm), condition=cond)
+        except FileNotFoundError:
+            proto.pop(k, None)
+    try:
+        ff, d_ = load(data_dir, E26_TAGS["fourier_raw"]), load(data_dir, E26_RESOLVE_BASE["fourier_raw"])
+    except FileNotFoundError:
+        ff = d_ = None
+    try:
+        fb, b_ = load(data_dir, E26_TAGS["fourier_base"]), load(data_dir, E26_RESOLVE_BASE["fourier_base"])
+    except FileNotFoundError:
+        fb = b_ = None
+    try:
+        tb = load(data_dir, E26_TAGS["tbracket_raw"])
+    except FileNotFoundError:
+        tb = None
+    if not proto and ff is None and fb is None and tb is None:
+        return None
+    out = e26_from_records(proto, orig, ff, d_, ff_base=fb, e15b=b_)
+    if tb is not None:
+        def _maybe(tag):
+            try:
+                return load(data_dir, tag)
+            except FileNotFoundError:
+                return None
+        oe, pn = _maybe(E25_TAGS["orig_exact"]), _maybe(E25_TAGS["protocol"])
+        if oe is not None:
+            out["tbracket_raw"] = e26_tbracket(tb, oe, pn)
+    # 표 10의 L-브래킷 프로토콜 경로(보조 판독, 사전규정 §3.1): 원좌표는 E26a가 있어야, 정규화는 기존 자료로.
+    for key, tags in (("lbracket_raw_path", E26_RAW_PATH), ("lbracket_norm_path", E26_NORM_PATH)):
+        try:
+            out[key] = lowest_lambda_pick({t: load(data_dir, t) for t in tags})
+        except FileNotFoundError:
+            pass
+    return out
+
+
+# E26e — 첫 통과 단계의 재풀이 검사(사전규정 2026-10-22-p5-e26e-prespecification.md). 단계 k의 첫 풀이(E26b)와 재풀이를 시드끼리
+# 짝지어, 검사가 울린 시드(Λ 감소 > 0.05)를 첫 풀이의 부류(정확·더 높은 모드·그 밖)로 나누고 정확의 전후를 센다.
+def higher_mode(rec, mac_min: float = 0.9) -> bool:
+    return rec["outcome"] != "invalid_quadrature" and rec["matched_mode"] > rec["mode"] and rec["mac"] >= mac_min
+
+
+E26E_MIN_HIGHER = 5
+
+
+def e26e_rule_stages(first, min_higher: int = E26E_MIN_HIGHER) -> list:
+    """사전규정 E26e의 규칙 — 첫 통과에서 셀 5/20 이상이 더 높은 모드에 자리 잡은(짝 모드 > 단계, MAC ≥ 0.9) 단계 2–6."""
+    return [k for k in range(2, 7) if sum(higher_mode(r) for r in first if r["mode"] == k) >= min_higher]
+
+
+def e26e_from_records(first, resolved, k: int, tol: float = E26_RESOLVE_TOL) -> dict:
+    a = {int(r["seed"]): r for r in first if r["mode"] == k}
+    b = {int(r["seed"]): r for r in resolved if r["mode"] == k}
+    if sorted(a) != sorted(b):
+        raise ValueError("첫 풀이와 재풀이의 시드가 다르다")
+    rd = resolve_drop(resolved, first, mode=k, tol=tol)
+    flag = {s_: d > tol for s_, d in zip(sorted(a), rd["drop"])}
+    cls = {s_: ("accurate" if accurate(a[s_]) else "higher" if higher_mode(a[s_]) else "other") for s_ in a}
+    table = {c: {"n": sum(1 for s_ in a if cls[s_] == c), "flagged": sum(1 for s_ in a if cls[s_] == c and flag[s_]),
+                 "recovered": sum(1 for s_ in a if cls[s_] == c and accurate(b[s_]))} for c in ("accurate", "higher", "other")}
+    keep = {s_: (b[s_] if flag[s_] else a[s_]) for s_ in a}       # 울리면 낮은 해(재풀이)를, 아니면 첫 풀이를 지킨다
+    return {"stage": int(k), "resolve": rd, "by_first_class": table,
+            "accurate_first": int(sum(accurate(a[s_]) for s_ in a)), "accurate_resolved": int(sum(accurate(b[s_]) for s_ in b)),
+            "accurate_after_test": int(sum(accurate(keep[s_]) for s_ in keep))}
+
+
+def e26e(data_dir: str = DATA_DIR) -> dict | None:
+    out = {}
+    for cond, tag in E26_TAGS.items():
+        if cond not in ("thick", "clamped2", "near", "bilayer"):
+            continue
+        for k in range(2, 7):
+            try:
+                out[f"{cond}_s{k}"] = e26e_from_records(load(data_dir, tag), load(data_dir, f"{tag}_s{k}_ff"), k)
+            except FileNotFoundError:
+                pass
+    return out or None
+
+
+# E27 — 양단 고정 상자의 프로토콜 전파와 정사각 단면의 첫 통과(사전규정 2026-10-23-p5-e27-prespecification.md).
+# 선택 규칙은 참조를 읽지 않는다: 시드마다 사다리가 안정한(꼬리 폭 ≤ 10⁻³) 후보 가운데 감사 Λ가 가장 낮은 것, 동률이면
+# 후보 순서(first, ff, long, norm), 안정한 후보가 없으면 전 후보 가운데 감사 Λ가 가장 낮은 것.
+E27_LADDER_TOL = 1e-3
+E27_RULE = ("per seed, the candidate of lowest audit eigenvalue among those whose ladder tail spread is at most 1e-3 "
+            "(ties broken by candidate order; if none is stable, lowest audit eigenvalue overall); no reference is read")
+E27_SELECTION = "p5_e27_cc_selection.json"
+E27_SQ_TAG = "e27_sq_mc"
+E27_CC_ORIGINAL = ("e13b_clamped2", "exact", "resampled")
+E27_CC_FIRST = "e26_cc_mc"
+
+
+def _stable(rec, tol: float = E27_LADDER_TOL) -> bool:
+    v = rec.get("ladder_tail_spread")
+    return v is not None and np.isfinite(v) and v <= tol
+
+
+def e27_select_stage(recs_by_path: dict, k: int, tol: float = E27_LADDER_TOL) -> dict:
+    """단계 k의 후보 기록(경로 → 기록 목록)에서 시드마다 고른 경로. 경로의 순서가 동률을 깬다."""
+    by = {p_: {int(r["seed"]): r for r in recs if r["mode"] == int(k)} for p_, recs in recs_by_path.items()}
+    seeds = sorted(next(iter(by.values())))
+    if not seeds or any(sorted(v) != seeds for v in by.values()):
+        raise ValueError(f"단계 {k}: 후보마다 시드가 다르거나 비어 있다")
+    order = list(recs_by_path)
+    return {s_: min(order, key=lambda p_: (not _stable(by[p_][s_], tol), by[p_][s_]["Lam"], order.index(p_)))
+            for s_ in seeds}
+
+
+def e27_from_records(cands: dict, selection: dict, orig, first_pass, aux: dict | None = None,
+                     tol: float = E26_RESOLVE_TOL, B: int = B_DEFAULT, seed: int = SEED, check_s3: bool = True,
+                     higher: dict | None = None) -> dict:
+    """cands = {단계: {경로: 기록}}, selection = {단계: {시드: 경로}}. 고른 풀이로 모드 1–6을 세고(시드 짝지은 대비 둘),
+    단계마다 재풀이 검사를 읽는다: 첫 풀이 대비 고른 풀이의 Λ 감소가 허용오차를 넘으면 울린 것이다.
+
+    `higher` = {단계: {시드: bool}}(E28 사전규정 §8)이면 그 단계의 첫 풀이가 더 높은 모드인지를 기록 대신 그것으로 정한다 —
+    단계 k만 푼 실행의 기록은 참조 모드 1–k로만 짝지어 더 높은 모드를 식별하지 못한다. 정확 판정은 기록 그대로다."""
+    modes = tuple(sorted(cands))
+    sel_recs = []
+    stages = {}
+    for k in modes:
+        by = {p_: {int(r["seed"]): r for r in recs if r["mode"] == k} for p_, recs in cands[k].items()}
+        seeds = sorted(by["first"])
+        pick = {int(s_): p_ for s_, p_ in selection[k].items()}
+        if sorted(pick) != seeds:
+            raise ValueError(f"단계 {k}의 선택과 기록의 시드가 다르다")
+        chosen = {s_: by[pick[s_]][s_] for s_ in seeds}
+        sel_recs += list(chosen.values())
+        first = by["first"]
+        drop = {s_: (first[s_]["Lam"] - chosen[s_]["Lam"]) / first[s_]["Lam"] for s_ in seeds}
+        flag = {s_: drop[s_] > tol for s_ in seeds}
+        hk = None if higher is None else higher.get(k)
+        cls = {s_: ("accurate" if accurate(first[s_]) else
+                    "higher" if (higher_mode(first[s_]) if hk is None else bool(hk[s_])) else "other")
+               for s_ in seeds}
+        stages[k] = {
+            "accurate_each": {p_: int(sum(accurate(by[p_][s_]) for s_ in seeds)) for p_ in by},
+            "repairs_of_higher": {p_: int(sum(1 for s_ in seeds if cls[s_] == "higher" and accurate(by[p_][s_])))
+                                  for p_ in by if p_ != "first"},
+            "selected_each": {p_: int(sum(1 for s_ in seeds if pick[s_] == p_)) for p_ in by},
+            "accurate_selected": int(sum(accurate(chosen[s_]) for s_ in seeds)),
+            "unstable_selected": int(sum(not _stable(chosen[s_]) for s_ in seeds)),
+            "invalid_selected": int(sum(chosen[s_]["outcome"] == "invalid_quadrature" for s_ in seeds)),
+            "first_class": {c: int(sum(1 for s_ in seeds if cls[s_] == c)) for c in ("accurate", "higher", "other")},
+            "flagged": int(sum(flag.values())),
+            "false_positive": int(sum(1 for s_ in seeds if cls[s_] == "accurate" and flag[s_])),
+            "missed": int(sum(1 for s_ in seeds if cls[s_] == "higher" and accurate(chosen[s_]) and not flag[s_])),
+            "drop": [float(drop[s_]) for s_ in seeds]}
+    a = _seed_share(sel_recs, accurate, modes)
+    out = {"accurate_by_mode": {m: int(sum(accurate(r) for r in sel_recs if r["mode"] == m)) for m in modes},
+           "stages": stages}
+    if check_s3 and 3 in cands and 2 in selection:
+        # 점검(사전규정 §3.3) — 단계 2에서 첫 통과의 망을 고른 시드는 단계 3 `first`가 첫 통과의 단계 3을 되풀이한다.
+        same = sorted(int(s_) for s_, p_ in selection[2].items() if p_ == "first")
+        fp3 = {int(r["seed"]): r for r in first_pass if r["mode"] == 3}
+        e3 = {int(r["seed"]): r for r in cands[3]["first"] if r["mode"] == 3}
+        out["check_s3_first"] = {
+            "n": len(same),
+            "same_class": int(sum((fp3[s_]["outcome"], fp3[s_]["matched_mode"]) == (e3[s_]["outcome"], e3[s_]["matched_mode"])
+                                  for s_ in same)),
+            "max_rel_dlam": float(max((abs(fp3[s_]["Lam"] - e3[s_]["Lam"]) / fp3[s_]["Lam"] for s_ in same), default=0.0))}
+    out["accurate_total"] = int(sum(out["accurate_by_mode"].values()))
+    for key, ref in (("primary", orig), ("vs_first_pass", first_pass)):
+        ci = paired_bootstrap(a, _seed_share(ref, accurate, modes), B, seed)
+        out[key] = {"contrast": ci, "verdict": _rule(ci),
+                    "reference_by_mode": {m: _n_acc(ref, (m,)) for m in modes}}
+    if aux:
+        out["aux"] = {}
+        for k, paths in aux.items():
+            first = {int(r["seed"]): r for r in cands[k]["first"] if r["mode"] == k}
+            for p_, recs in paths.items():
+                b = {int(r["seed"]): r for r in recs if r["mode"] == k}
+                out["aux"][f"s{k}_{p_}"] = {
+                    "accurate": int(sum(accurate(b[s_]) for s_ in b)),
+                    "repairs_of_higher": int(sum(1 for s_ in b if higher_mode(first[s_]) and accurate(b[s_]))),
+                    "flagged_vs_first": int(sum(1 for s_ in b
+                                                if (first[s_]["Lam"] - b[s_]["Lam"]) / first[s_]["Lam"] > tol))}
+    return out
+
+
+def e27_square_from_records(sq, orig16, B: int = B_DEFAULT, seed: int = SEED) -> dict:
+    modes = (1, 2, 3, 4, 5, 6)
+    ci = paired_bootstrap(_seed_share(sq, accurate, modes), _seed_share(orig16, accurate, modes), B, seed)
+    return {"contrast": ci, "verdict": _rule(ci),
+            "accurate_by_mode": {"first_pass": {m: _n_acc(sq, (m,)) for m in modes},
+                                 "original": {m: _n_acc(orig16, (m,)) for m in modes}},
+            "higher_by_mode": {m: int(sum(higher_mode(r) for r in sq if r["mode"] == m)) for m in modes}}
+
+
+def e27(data_dir: str = DATA_DIR) -> dict | None:
+    out = {}
+    try:
+        sq, o16 = load(data_dir, E27_SQ_TAG), load(data_dir, E16_TAGS["exact"])
+        out["square"] = e27_square_from_records(sq, o16)
+    except FileNotFoundError:
+        pass
+    p = os.path.join(data_dir, E27_SELECTION)
+    if os.path.exists(p):
+        sel = json.load(open(p, encoding="utf-8"))
+        done = sorted(int(k) for k in sel["stages"])
+        if done == list(range(1, 7)):
+            from .run_p5_neural import e27_candidates, E27_AUX_PATHS, e27_tag
+            cands = {k: {p_: load(data_dir, t) for p_, t in e27_candidates(k).items()} for k in done}
+            for k in done:       # 선택 파일이 규칙대로인지 기록에서 다시 계산해 확인한다
+                if {str(s_): v for s_, v in e27_select_stage(cands[k], k).items()} != sel["stages"][str(k)]["choice"]:
+                    raise ValueError(f"단계 {k}의 선택 파일이 규칙과 다르다")
+            aux = {}
+            for k, paths in E27_AUX_PATHS.items():
+                try:
+                    aux[k] = {p_: load(data_dir, e27_tag(k, p_)) for p_ in paths}
+                except FileNotFoundError:
+                    pass
+            tag, arm, cond = E27_CC_ORIGINAL
+            out["clamped2"] = e27_from_records(
+                cands, {k: sel["stages"][str(k)]["choice"] for k in done},
+                load(data_dir, tag, arm=arm_key(arm), condition=cond), load(data_dir, E27_CC_FIRST), aux or None)
+    return out or None
+
+
+# E28 — end-to-end 프로토콜, 같은 예산의 재시작 비교, 근축퇴 전파, T-브래킷 음성 대조, 강형식 견인력 가중
+# (사전규정 2026-10-23-p5-e28-prespecification.md). 선택 규칙은 E27과 같다(`e27_select_stage`).
+E28_SELECTION = "p5_e28_cc_selection.json"
+E28_NEAR_SELECTION = "p5_e28_nr_selection.json"
+E28_T_STRICT = 0.06          # 명제 2가 허용오차 0.05의 부정확을 보증하는 감소 기준(보조 판독)
+
+
+def dispositions(chosen: dict, first: dict, tol: float = E26_RESOLVE_TOL) -> dict:
+    """참조를 읽지 않는 단계 상태(사전규정 §3.2) — 시드마다 계기(고른 해의 사다리 안정), 재풀이 상태(첫 풀이보다 허용오차를
+    넘게 낮은 해가 있었는가), 처리(보고 가능 = 사다리 안정, 판정 보류 = 안정한 후보 없음). 참조 정확과 교차한다."""
+    out = {"stable": 0, "improved": 0, "no_further_improvement": 0, "reportable": 0, "undetermined": 0,
+           "reportable_accurate": 0, "reportable_inaccurate": 0, "undetermined_accurate": 0}
+    for s_, r in chosen.items():
+        st = _stable(r)
+        imp = (first[s_]["Lam"] - r["Lam"]) / first[s_]["Lam"] > tol
+        out["stable"] += st
+        out["improved" if imp else "no_further_improvement"] += 1
+        if st:
+            out["reportable"] += 1
+            out["reportable_accurate" if accurate(r) else "reportable_inaccurate"] += 1
+        else:
+            out["undetermined"] += 1
+            out["undetermined_accurate"] += int(accurate(r))
+    return out
+
+
+def restart_pick(first_recs, restarts: dict, k: int) -> dict:
+    """같은 예산의 단순 대안 — 재초기화 K회 가운데 감사 Λ가 가장 낮은 해(그리고 첫 풀이까지 넣은 최저). 참조를 읽지 않는다."""
+    f = {int(r["seed"]): r for r in first_recs if r["mode"] == int(k)}
+    rs = {name: {int(r["seed"]): r for r in recs if r["mode"] == int(k)} for name, recs in restarts.items()}
+    seeds = sorted(f)
+    if any(sorted(v) != seeds for v in rs.values()):
+        raise ValueError("재시작마다 시드가 다르다")
+    best = {s_: min((v[s_] for v in rs.values()), key=lambda r: r["Lam"]) for s_ in seeds}
+    best_all = {s_: min([f[s_], best[s_]], key=lambda r: r["Lam"]) for s_ in seeds}
+    return {"accurate_each": {n: int(sum(accurate(v[s_]) for s_ in seeds)) for n, v in rs.items()},
+            "accurate_lowest_restart": int(sum(accurate(best[s_]) for s_ in seeds)),
+            "accurate_lowest_with_first": int(sum(accurate(best_all[s_]) for s_ in seeds)),
+            "flagged_vs_first": int(sum((f[s_]["Lam"] - best[s_]["Lam"]) / f[s_]["Lam"] > E26_RESOLVE_TOL for s_ in seeds)),
+            "lowest_restart_records": [best[s_] for s_ in seeds]}
+
+
+def e28_cc_from_records(cands: dict, selection: dict, orig, first_pass, restarts: dict | None = None,
+                        B: int = B_DEFAULT, seed: int = SEED, higher: dict | None = None) -> dict:
+    """E28a — E27과 같은 판독(주 판정 D_full·보조 D_first, 단계별 재풀이 검사)에 단계별 처리 상태와 같은 예산의 재시작 비교를 더한다.
+    `higher`는 단계 2–6 첫 풀이의 더 높은 모드 분류(사전규정 §8, `p5_exploit.e28_stage_mac`)다."""
+    out = e27_from_records(cands, selection, orig, first_pass, None, B=B, seed=seed, check_s3=False, higher=higher)
+    out["dispositions"] = {}
+    out["flags_strict"] = {}
+    for k in sorted(cands):
+        by = {p_: {int(r["seed"]): r for r in recs if r["mode"] == k} for p_, recs in cands[k].items()}
+        pick = {int(s_): p_ for s_, p_ in selection[k].items()}
+        chosen = {s_: by[pick[s_]][s_] for s_ in by["first"]}
+        out["dispositions"][k] = dispositions(chosen, by["first"])
+        out["flags_strict"][k] = int(sum((by["first"][s_]["Lam"] - chosen[s_]["Lam"]) / by["first"][s_]["Lam"] > E28_T_STRICT
+                                         for s_ in chosen))
+    if restarts:
+        out["restarts"] = {}
+        for k, rr in restarts.items():
+            rp = restart_pick(cands[k]["first"], rr, k)
+            longk = cands[k].get("long")
+            if longk is not None:
+                a = _seed_share(rp.pop("lowest_restart_records"), accurate, (k,))
+                b = _seed_share(longk, accurate, (k,))
+                ci = paired_bootstrap(a, b, B, seed)
+                rp["vs_long"] = {"contrast": ci, "verdict": _rule(ci), "accurate_long": _n_acc(longk, (k,))}
+            else:
+                rp.pop("lowest_restart_records")
+            out["restarts"][k] = rp
+    return out
+
+
+def e28_lb_from_records(first, restarts: dict, fourfold, fourier, B: int = B_DEFAULT, seed: int = SEED) -> dict:
+    """E28b — L-브래킷 단계 6. 주 판정: acc₆(재초기화 4회 중 최저 Λ) − acc₆(4배 일정, 같은 예산). 보조: − acc₆(Fourier 재풀이)."""
+    rp = restart_pick(first, restarts, 6)
+    a = _seed_share(rp.pop("lowest_restart_records"), accurate, (6,))
+    out = {**rp}
+    for key, ref in (("vs_fourfold", fourfold), ("vs_fourier", fourier)):
+        ci = paired_bootstrap(a, _seed_share(ref, accurate, (6,)), B, seed)
+        out[key] = {"contrast": ci, "verdict": _rule(ci), "accurate_reference": _n_acc(ref, (6,))}
+    out["accurate_first"] = _n_acc(first, (6,))
+    return out
+
+
+def e28_near_from_records(cands: dict, selection: dict, first_pass) -> dict:
+    """E28c — 근축퇴 단면의 단계 5 선택을 단계 6으로 전파. 판독: 단계 6의 경로별·선택 정확 수, 첫 통과 단계 6 대비."""
+    out = {}
+    for k in (5, 6):
+        by = {p_: {int(r["seed"]): r for r in recs if r["mode"] == k} for p_, recs in cands[k].items()}
+        pick = {int(s_): p_ for s_, p_ in selection[k].items()}
+        chosen = {s_: by[pick[s_]][s_] for s_ in by["first"]}
+        out[k] = {"accurate_each": {p_: int(sum(accurate(v[s_]) for s_ in v)) for p_, v in by.items()},
+                  "accurate_selected": int(sum(accurate(r) for r in chosen.values())),
+                  "selected_each": {p_: int(sum(1 for s_ in pick if pick[s_] == p_)) for p_ in by},
+                  "dispositions": dispositions(chosen, by["first"])}
+    out["first_pass_stage6"] = _n_acc(first_pass, (6,))
+    return out
+
+
+def e28_tb_from_records(first, resolved: dict) -> dict:
+    """E28d — T-브래킷 음성 대조. 단계 k마다 첫 통과(E26d)와 Fourier 재풀이를 시드끼리 짝지어 거짓 양성(정확한 첫 풀이가
+    울린 수)과 고른 해의 정확을 센다."""
+    out, fp, n_acc_first, n_sel = {}, 0, 0, 0
+    for k, recs in sorted(resolved.items()):
+        a = {int(r["seed"]): r for r in first if r["mode"] == k}
+        b = {int(r["seed"]): r for r in recs if r["mode"] == k}
+        if sorted(a) != sorted(b):
+            raise ValueError(f"단계 {k}: 시드가 다르다")
+        flag = {s_: (a[s_]["Lam"] - b[s_]["Lam"]) / a[s_]["Lam"] > E26_RESOLVE_TOL for s_ in a}
+        pick = {s_: min([a[s_], b[s_]], key=lambda r: (not _stable(r), r["Lam"])) for s_ in a}
+        st = {"accurate_first": int(sum(accurate(a[s_]) for s_ in a)),
+              "accurate_resolved": int(sum(accurate(b[s_]) for s_ in b)),
+              "flagged": int(sum(flag.values())),
+              "false_positive": int(sum(1 for s_ in a if accurate(a[s_]) and flag[s_])),
+              "accurate_selected": int(sum(accurate(r) for r in pick.values())),
+              "max_drop": float(max((a[s_]["Lam"] - b[s_]["Lam"]) / a[s_]["Lam"] for s_ in a))}
+        out[k] = st
+        fp += st["false_positive"]; n_acc_first += st["accurate_first"]; n_sel += st["accurate_selected"]
+    out["total"] = {"false_positive": fp, "accurate_first": n_acc_first, "accurate_selected": n_sel}
+    return out
+
+
+def e28_pinn_from_records(w10, w1, B: int = B_DEFAULT, seed: int = SEED) -> dict:
+    """E28e — 강형식 견인력 가중 10 대 1(E24 thick). 주 판정: 셀마다 log10(|Λ − λ|/Λ)의 시드 평균 차(가중 10 − 1).
+    보조: acc₁₋₆ 차, 모드 2–6에서 더 낮은 모드에 짝지어진 셀의 비율 차."""
+    def mism(recs):
+        by = {}
+        for r in recs:
+            by.setdefault(int(r["seed"]), []).append(np.log10(max(abs(r["Lam"] - r["lam_param"]) / abs(r["Lam"]), 1e-16)))
+        return np.array([np.mean(by[s_]) for s_ in sorted(by)])
+    out = {}
+    ci = paired_bootstrap(mism(w10), mism(w1), B, seed)
+    out["mismatch"] = {"contrast": ci, "verdict": _rule(ci),
+                       "median_rel": {"w10": float(np.median([abs(r["Lam"] - r["lam_param"]) / abs(r["Lam"]) for r in w10])),
+                                      "w1": float(np.median([abs(r["Lam"] - r["lam_param"]) / abs(r["Lam"]) for r in w1]))}}
+    modes = (1, 2, 3, 4, 5, 6)
+    ci = paired_bootstrap(_seed_share(w10, accurate, modes), _seed_share(w1, accurate, modes), B, seed)
+    out["accuracy"] = {"contrast": ci, "verdict": _rule(ci), "w10": _n_acc(w10, modes), "w1": _n_acc(w1, modes)}
+    lower = lambda r: r["matched_mode"] < r["mode"] and r["mac"] >= 0.9
+    ci = paired_bootstrap(_seed_share(w10, lower, (2, 3, 4, 5, 6)), _seed_share(w1, lower, (2, 3, 4, 5, 6)), B, seed)
+    out["lower_mode"] = {"contrast": ci, "verdict": _rule(ci)}
+    out["shape_match"] = {"w10": int(sum(r["mac"] >= 0.9 for r in w10)), "w1": int(sum(r["mac"] >= 0.9 for r in w1))}
+    return out
+
+
+def e28_higher_from_stage_mac(data_dir: str, stages) -> tuple:
+    """사전규정 §8 — 단계 2–6 첫 풀이의 더 높은 모드 분류를 재채점 파일(`p5_exploit_e28_cc_s<k>_first_stage_mac.csv`)에서
+    읽는다. 파일이 없거나 재채점이 실행의 채점을 되풀이하지 않은 단계는 넣지 않고(그 단계는 기록으로 분류된다) 출처에 적는다."""
+    hi, src = {}, {}
+    for k in stages:
+        if int(k) == 1:
+            src[1] = "records (first pass, modes 1-6)"
+            continue
+        t = f"e28_cc_s{int(k)}_first"
+        pm = os.path.join(data_dir, f"manifest_p5_exploit_{t}_stage_mac.json")
+        pc = os.path.join(data_dir, f"p5_exploit_{t}_stage_mac.csv")
+        if not (os.path.exists(pm) and os.path.exists(pc)):
+            src[int(k)] = "records (modes 1-k only; stage MAC missing)"
+            continue
+        if not json.load(open(pm, encoding="utf-8")).get("reproduces_record"):
+            src[int(k)] = "records (stage MAC did not reproduce the run)"
+            continue
+        with open(pc, encoding="utf-8") as f:
+            hi[int(k)] = {int(r["seed"]): r["higher"] in ("True", "true", "1") for r in csv.DictReader(f)}
+        src[int(k)] = "stage MAC against FEM modes 1-8"
+    return hi, src
+
+
+def e28(data_dir: str = DATA_DIR) -> dict | None:
+    out = {}
+    def _maybe(tag):
+        try:
+            return load(data_dir, tag)
+        except FileNotFoundError:
+            return None
+    from .run_p5_neural import (e28_candidates, e28_aux_paths, e28_tag, e28_near_candidates, E28_LB_REINIT,
+                                E21H_TAGS, E26_TAGS as RUN_E26_TAGS)
+    p = os.path.join(data_dir, E28_SELECTION)
+    if os.path.exists(p):
+        sel = json.load(open(p, encoding="utf-8"))
+        done = sorted(int(k) for k in sel["stages"])
+        if done == list(range(1, 7)):
+            cands = {k: {p_: load(data_dir, t) for p_, t in e28_candidates(k).items()} for k in done}
+            for k in done:
+                if {str(s_): v for s_, v in e27_select_stage(cands[k], k).items()} != sel["stages"][str(k)]["choice"]:
+                    raise ValueError(f"E28a 단계 {k}의 선택 파일이 규칙과 다르다")
+            restarts = {}
+            for k in (2, 3):
+                rr = {pp: _maybe(e28_tag(k, pp)) for pp in e28_aux_paths(k)}
+                if rr and all(v is not None for v in rr.values()):
+                    restarts[k] = rr
+            tag, arm, cond = E27_CC_ORIGINAL
+            hi, src = e28_higher_from_stage_mac(data_dir, done)
+            out["clamped2"] = e28_cc_from_records(cands, {k: sel["stages"][str(k)]["choice"] for k in done},
+                                                  load(data_dir, tag, arm=arm_key(arm), condition=cond),
+                                                  load(data_dir, E27_CC_FIRST), restarts or None, higher=hi or None)
+            out["clamped2"]["higher_source"] = src
+    rr = {f"reinit{r}": _maybe(f"e28_lb_s6_reinit{r}") for r in E28_LB_REINIT}
+    if all(v is not None for v in rr.values()):
+        out["lbracket_restart"] = e28_lb_from_records(load(data_dir, "e21lb_exact_mc1"), rr,
+                                                      load(data_dir, E21H_TAGS["sched_raw"]),
+                                                      load(data_dir, RUN_E26_TAGS["fourier_raw"]))
+    pn = os.path.join(data_dir, E28_NEAR_SELECTION)
+    if os.path.exists(pn):
+        seln = json.load(open(pn, encoding="utf-8"))
+        if sorted(int(k) for k in seln["stages"]) == list(range(1, 7)):
+            candsn = {k: {p_: load(data_dir, t) for p_, t in e28_near_candidates(k).items()} for k in (5, 6)}
+            out["near"] = e28_near_from_records(candsn, {k: seln["stages"][str(k)]["choice"] for k in (5, 6)},
+                                                load(data_dir, RUN_E26_TAGS["near"]))
+    tb = {k: _maybe(f"e28_tb_s{k}_ff") for k in range(1, 7)}
+    tb = {k: v for k, v in tb.items() if v is not None}
+    if tb:
+        out["tbracket_control"] = e28_tb_from_records(load(data_dir, RUN_E26_TAGS["tbracket_raw"]), tb)
+    w10 = _maybe("e28_pinn_thick_w10")
+    if w10 is not None:
+        out["pinn_traction"] = e28_pinn_from_records(w10, load(data_dir, "e24_pinn_thick"))
+    return out or None
+
+
+# ── E29 (사전규정 2026-10-30-p5-e29-prespecification.md) — 한 단계 더 ───────────────────────────────────────
+# 첫 통과의 저장 모드 1–6에서 푼 단계 7을 순서 검사의 경쟁자로 더한다. 단계 7이 사다리를 통과하고 감사 Λ가 단계 6의
+# (1 − t)배보다 작으면 단계 6을 울린다(참조를 읽지 않는다). 채점은 실행 뒤에 교차한다: 단계 6·7의 출력은 FEM 모드
+# 1–10 재채점(`p5_exploit.e29_stage_mac`)으로 식별하고, 단계 1–5는 기록의 짝을 쓴다.
+E29_FIRST = {"lbracket": "e21lb_exact_mc1", "near": "e26_near_mc"}
+E29_ORDER_T = 0.05
+E29_PREDICTION = {"lbracket": {"flags_stage6_at_least": 14}, "near": {"false_positives": 0, "flags_on_inaccurate": 0}}
+
+
+def e29_ident(data_dir: str, tag: str) -> tuple:
+    """FEM 재채점 파일의 {시드: (짝 모드, MAC)}와 출처. 파일이 없거나 재채점이 실행을 되풀이하지 않으면 빈 사전이다
+    (그때는 기록의 짝 — 참조 모드 1–k — 을 쓴다)."""
+    pm = os.path.join(data_dir, f"manifest_p5_exploit_{tag}_stage_mac.json")
+    pc = os.path.join(data_dir, f"p5_exploit_{tag}_stage_mac.csv")
+    if not (os.path.exists(pm) and os.path.exists(pc)):
+        return {}, "records (stage MAC missing)"
+    man = json.load(open(pm, encoding="utf-8"))
+    if not man.get("reproduces_record"):
+        return {}, "records (stage MAC did not reproduce the run)"
+    with open(pc, encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    return ({int(r["seed"]): (int(r["mode_ref"]), float(r["mac_ref"])) for r in rows},
+            f"stage MAC against FEM modes 1-{int(man['n_ref'])}")
+
+
+def _reordered_accurate(outs: list, lamref: dict, n_report: int = 6) -> int:
+    """outs = [(Λ, 짝 모드, MAC, 군집 또는 None)]. 감사 Λ 순으로 세워 순위 1–n_report를 채점한다(`p5_posthoc.order_check`의
+    정렬 판독과 같은 규칙: 짝이 순위이거나 순위가 군집 안, MAC ≥ 0.9, 그 순위의 참조 고유값에 대한 e_λ ≤ 0.05)."""
+    n = 0
+    for rank, (lam, mm, mac, cl) in zip(range(1, n_report + 1), sorted(outs, key=lambda o: o[0])):
+        shape = mm == rank or rank in (cl or ())
+        n += bool(shape and mac >= 0.9 and abs(lam - lamref[rank]) / lamref[rank] <= 0.05)
+    return n
+
+
+def e29_from_records(first: list, stage7: list, ident7: dict | None = None, ident6: dict | None = None,
+                     t: float = E29_ORDER_T) -> dict:
+    """first = 첫 통과 기록(단계 1–6), stage7 = 단계 7 기록, ident7·ident6 = {시드: (짝 모드, MAC)}(FEM 재채점, 없으면 기록).
+    시드마다 단계 6의 울림과 그 정확(기록), 단계 7의 식별, 단계 7이 새로 울리는 앞 단계(단계 1–6 사다리로는 울리지 않던
+    것), 단계 7을 더한 정렬 판독(순위 1–6)을 낸다."""
+    lad = {}
+    for r in first:
+        lad.setdefault(int(r["seed"]), {})[int(r["mode"])] = r
+    s7 = {int(r["seed"]): r for r in stage7 if int(r["mode"]) == 7}
+    seeds = sorted(lad)
+    if sorted(s7) != seeds or any(sorted(lad[s_]) != list(range(1, 7)) for s_ in seeds):
+        raise ValueError("E29: 첫 통과(단계 1–6)와 단계 7의 시드가 맞지 않는다")
+    ident7, ident6 = ident7 or {}, ident6 or {}
+    rows, modes7 = [], {}
+    for s_ in seeds:
+        L, r7 = lad[s_], s7[s_]
+        lam = {k: float(L[k]["Lam"]) for k in range(1, 7)}
+        lam7 = float(r7["Lam"])
+        stable7 = _stable(r7)
+        flag6 = bool(stable7 and lam7 < (1 - t) * lam[6])
+        old = {j for j in range(1, 6) if any(_stable(L[i]) and lam[i] < (1 - t) * lam[j] for i in range(j + 1, 7))}
+        new = [j for j in range(1, 6) if stable7 and lam7 < (1 - t) * lam[j] and j not in old]
+        m7, mac7 = ident7.get(s_, (int(r7["matched_mode"]), float(r7["mac"])))
+        m6, mac6 = ident6.get(s_, (int(L[6]["matched_mode"]), float(L[6]["mac"])))
+        key = m7 if mac7 >= 0.9 else ("mixture" if mac7 >= 0.5 else "unidentified")
+        modes7[str(key)] = modes7.get(str(key), 0) + 1
+        lamref = {k: float(L[k]["Lam_ref"]) for k in range(1, 7)}
+        outs = [(lam[k], int(L[k]["matched_mode"]), float(L[k]["mac"]), tuple(L[k].get("cluster") or ()) or None)
+                for k in range(1, 6)] + [(lam[6], m6, mac6, None)]
+        rows.append({"seed": s_, "lam6": lam[6], "lam7": lam7, "drop": 1 - lam7 / lam[6], "stable7": bool(stable7),
+                     "flag6": flag6, "accurate6": bool(accurate(L[6])), "mode6": m6, "mac6": mac6, "mode7": m7,
+                     "mac7": mac7, "new_earlier_flags": new,
+                     "reordered6": _reordered_accurate(outs, lamref),
+                     "reordered7": _reordered_accurate(outs + [(lam7, m7, mac7, None)], lamref)})
+    acc6 = [r for r in rows if r["accurate6"]]
+    return {"seeds": len(rows), "stage7_stable": sum(r["stable7"] for r in rows),
+            "flags_stage6": sum(r["flag6"] for r in rows),
+            "stage6_accurate": len(acc6), "false_positives": sum(r["flag6"] for r in acc6),
+            "flags_on_inaccurate": sum(r["flag6"] for r in rows if not r["accurate6"]),
+            "new_earlier_flags": sum(len(r["new_earlier_flags"]) for r in rows),
+            "stage7_modes": dict(sorted(modes7.items())),
+            "reordered_accurate_six_outputs": sum(r["reordered6"] for r in rows),
+            "reordered_accurate_seven_outputs": sum(r["reordered7"] for r in rows),
+            "flagged_min_drop": min((r["drop"] for r in rows if r["flag6"]), default=None),
+            "accurate_max_drop": max((r["drop"] for r in acc6), default=None),
+            "per_seed": rows}
+
+
+def e29(data_dir: str = DATA_DIR) -> dict | None:
+    from .run_p5_neural import E29_TAGS
+    out = {}
+    for s_, tag in E29_TAGS.items():
+        if not os.path.exists(os.path.join(data_dir, f"manifest_p5_neural_{tag}.json")):
+            continue
+        id7, src7 = e29_ident(data_dir, tag)
+        id6, src6 = e29_ident(data_dir, f"{E29_FIRST[s_]}_s6")
+        r = e29_from_records(load(data_dir, E29_FIRST[s_]), load(data_dir, tag), id7, id6)
+        pred = E29_PREDICTION[s_]
+        if s_ == "lbracket":
+            r["verdict"] = {"prediction": pred, "hit": r["flags_stage6"] >= pred["flags_stage6_at_least"]}
+        else:
+            r["verdict"] = {"prediction": pred, "hit": (r["false_positives"] == pred["false_positives"]
+                                                        and r["flags_on_inaccurate"] == pred["flags_on_inaccurate"])}
+        r["ident_source"] = {"stage6": src6, "stage7": src7}
+        out[s_] = r
+    return out or None
+
+
+# ── E30 (사전규정 2026-10-30-p5-e30-prespecification.md) — 단계적 배분 ────────────────────────────────────
+# 1회차(두 경로 + 단계 7) → 순서 검사 → 울린 시드만 2회차(j*에서 네 경로, 그 뒤 두 경로). 판정은 최종 사슬의 단계 1–6 정확과
+# 시드마다 센 비용(그 시드의 절차가 부른 실행의 GPU-시간 합 / 첫 통과의 GPU-시간)의 시드 평균이다.
+E30_T = 0.05
+E30_RULE = (E27_RULE + "; restricted per seed to its eligible paths (round 2 adds the Fourier and held-rate paths only "
+            "at the seed's flagged stage j*)")
+E30_ORDER_RULE = ("stage j (1-6) is flagged when a later stage i (up to the look-ahead stage 7) of the seed's chain has "
+                  "ladder tail spread at most 1e-3 and audit eigenvalue below (1 - 0.05) times that of stage j; j* is the "
+                  "earliest flagged stage; no reference is read")
+E30_FIRST = {"cc": E27_CC_FIRST, "nr": "e26_near_mc"}
+E30_GO = {"accurate_at_least": 118, "mean_cost_ratio_at_most": 2.5}
+E30_PREDICTION = {"cc": {"go": True, "d_full": "rule2", "false_positives": 0},
+                  "nr": {"d_first": "rule1", "false_positives": 0}}
+
+
+def e30_select_stage(recs_by_path: dict, k: int, eligible: dict, tol: float = E27_LADDER_TOL) -> dict:
+    """E27 규칙을 시드마다 고를 수 있는 경로(`eligible` = {시드: 경로들})로 좁힌다. 경로의 순서가 동률을 깬다."""
+    by = {p_: {int(r["seed"]): r for r in recs if r["mode"] == int(k)} for p_, recs in recs_by_path.items()}
+    order = list(recs_by_path)
+    out = {}
+    for s_, ok in sorted(eligible.items()):
+        ps = [p_ for p_ in order if p_ in ok]
+        if not ps:
+            raise ValueError(f"단계 {k} 시드 {s_}: 고를 경로가 없다")
+        out[int(s_)] = min(ps, key=lambda p_: (not _stable(by[p_][int(s_)], tol), by[p_][int(s_)]["Lam"], order.index(p_)))
+    return out
+
+
+def e30_order_flags(chain: dict, t: float = E30_T, last_reported: int = 6) -> list:
+    """시드 하나의 사슬 {단계: 기록}에서 순서 검사가 울린 단계(1–last_reported). 참조를 읽지 않는다."""
+    ks = sorted(chain)
+    return [j for j in ks if j <= last_reported and any(
+        _stable(chain[i]) and chain[i]["Lam"] < (1 - t) * chain[j]["Lam"] for i in ks if i > j)]
+
+
+def e30_from_records(cands1: dict, sel1: dict, plan: dict, cands2: dict | None, sel2: dict | None, cost: dict,
+                     tags1: dict, tags2: dict | None, first_pass: list, first_cost: float, compare: dict | None = None,
+                     new_tags=None, B: int = B_DEFAULT, seed: int = SEED) -> dict:
+    """cands = {단계: {경로: 기록 목록}}, sel = {단계: {시드: 경로}}, tags = {(단계, 경로): 태그}, cost = {태그: GPU-시간}.
+    `compare` = {이름: 단계 1–6 기록 목록}(시드 짝지은 비교 사슬). `new_tags`는 이 실험에서 새로 돈 실행(앙상블 GPU-시간
+    합계용, 없으면 모든 태그). 계획의 울림은 1회차 사슬에서 다시 계산해 확인한다."""
+    by1 = {k: {p_: {int(r["seed"]): r for r in recs if r["mode"] == k} for p_, recs in v.items()} for k, v in cands1.items()}
+    by2 = ({k: {p_: {int(r["seed"]): r for r in recs if r["mode"] == k} for p_, recs in v.items()}
+            for k, v in cands2.items()} if cands2 else {})
+    stages = sorted(by1)
+    seeds = sorted(by1[1]["first"])
+    flagged = {int(s_): int(j) for s_, j in plan["flagged"].items()}
+    if flagged and not by2:
+        raise ValueError("계획에 울린 시드가 있는데 2회차 기록이 없다")
+    r1 = {s_: {k: by1[k][sel1[k][s_]][s_] for k in stages} for s_ in seeds}
+    for s_ in seeds:
+        if e30_order_flags(r1[s_]) != list(plan["flags"][str(s_)]):
+            raise ValueError(f"시드 {s_}: 계획의 울림이 1회차 사슬과 다르다")
+    final, reproduce = {}, {"compared": 0, "max_rel_dlam": 0.0, "mismatch": 0}
+    for s_ in seeds:
+        j = flagged.get(s_)
+        final[s_] = {k: (by2[k][sel2[k][s_]][s_] if j is not None and k >= j else r1[s_][k]) for k in stages}
+        for k in by2:                                   # 2회차에서 아직 j*에 이르지 않은 시드는 1회차를 되풀이해야 한다
+            if j is not None and k >= j:
+                continue
+            a, b = by2[k][sel1[k][s_]][s_], r1[s_][k]
+            rel = abs(a["Lam"] - b["Lam"]) / abs(b["Lam"])
+            reproduce["compared"] += 1
+            reproduce["max_rel_dlam"] = max(reproduce["max_rel_dlam"], float(rel))
+            reproduce["mismatch"] += bool(rel > 0 or a["mac"] != b["mac"])
+    rep = range(1, 7)
+    acc = lambda ch: {k: int(sum(accurate(ch[s_][k]) for s_ in seeds)) for k in rep}
+    flags_final = {s_: e30_order_flags(final[s_]) for s_ in seeds}
+    fp = lambda ch, fl: int(sum(accurate(ch[s_][j]) for s_ in seeds for j in fl[s_]))
+    flags_r1 = {s_: list(plan["flags"][str(s_)]) for s_ in seeds}
+    # 비용 — 그 시드의 절차가 부른 실행만. 2회차의 j*에서 first·norm은 1회차와 같은 계산이라 다시 세지 않는다.
+    c1 = sum(cost[tags1[(k, p_)]] for k in stages for p_ in by1[k])
+    per_seed = {}
+    for s_ in seeds:
+        c = c1
+        j = flagged.get(s_)
+        if j is not None:
+            c += sum(cost[tags2[(j, p_)]] for p_ in by2[j] if p_ not in by1[j])
+            c += sum(cost[tags2[(k, p_)]] for k in stages if k > j for p_ in by2[k])
+        per_seed[s_] = c / first_cost
+    ratio = np.array([per_seed[s_] for s_ in seeds])
+    ens = sum(cost[t] for t in (set(tags1.values()) | set((tags2 or {}).values()) if new_tags is None else new_tags))
+    fin_recs = [final[s_][k] for s_ in seeds for k in rep]
+    out = {"accurate_by_stage": acc(final), "accurate": int(sum(acc(final).values())),
+           "round1_accurate_by_stage": acc(r1), "round1_accurate": int(sum(acc(r1).values())),
+           "first_pass_accurate": _n_acc(first_pass, tuple(rep)),
+           "flagged_seeds": {str(s_): j for s_, j in sorted(flagged.items())},
+           "flags_round1": int(sum(len(v) for v in flags_r1.values())), "false_positives_round1": fp(r1, flags_r1),
+           "flags_final": int(sum(len(v) for v in flags_final.values())), "false_positives_final": fp(final, flags_final),
+           "flags_final_by_seed": {str(s_): v for s_, v in flags_final.items() if v},
+           "round2": {str(s_): {"stage": j, "chosen": sel2[j][s_], "accurate_before": bool(accurate(r1[s_][j])),
+                                "accurate_after": bool(accurate(final[s_][j])),
+                                "drop": float(1 - final[s_][j]["Lam"] / r1[s_][j]["Lam"])}
+                      for s_, j in sorted(flagged.items())},
+           "round2_reproduces_round1": reproduce,
+           "selected_each_round1": {k: {p_: int(sum(sel1[k][s_] == p_ for s_ in seeds)) for p_ in by1[k]} for k in stages},
+           "cost": {"first_pass_gpu_h": float(first_cost), "round1_gpu_h_per_seed": float(c1),
+                    "mean_ratio": float(ratio.mean()), "median_ratio": float(np.median(ratio)),
+                    "max_ratio": float(ratio.max()), "per_seed_ratio": {str(s_): float(per_seed[s_]) for s_ in seeds},
+                    "ensemble_gpu_h": float(ens)}}
+    out["d_first"] = {"contrast": (ci := paired_bootstrap(_seed_share(fin_recs, accurate, tuple(rep)),
+                                                          _seed_share(first_pass, accurate, tuple(rep)), B, seed)),
+                      "verdict": _rule(ci)}
+    for name, recs in (compare or {}).items():
+        ci = paired_bootstrap(_seed_share(fin_recs, accurate, tuple(rep)), _seed_share(recs, accurate, tuple(rep)), B, seed)
+        out[f"d_{name}"] = {"contrast": ci, "verdict": _rule(ci), "accurate_reference": _n_acc(recs, tuple(rep))}
+    return out
+
+
+def _gpu_hours(data_dir: str, tag: str) -> float:
+    import datetime as dt
+    m = json.load(open(os.path.join(data_dir, f"manifest_p5_neural_{tag}.json"), encoding="utf-8"))
+    a = dt.datetime.fromisoformat(m["launch"]["timestamp_utc"])
+    return (dt.datetime.fromisoformat(m["timestamp_utc"]) - a).total_seconds() / 3600
+
+
+def _staged_judgment(data_dir: str, s: str, first_tag: str, compare: dict | None = None) -> dict | None:
+    """단계적 배분 구조 하나의 판정량(`e30_from_records`). 1회차 단계 1–7과 계획(울림이 있으면 2회차 단계 j_min–7까지)이 끝났을
+    때만 낸다. 단계 1의 first는 첫 통과를 다시 쓴 실행이라 비용은 같은 구조 단계 1의 norm 실행 시간으로 센다(같은 크기의 단계
+    하나). 다시 쓴 실행(첫 통과 포함)은 앙상블 GPU-시간 합계에서 뺀다. E30과 E31이 같이 쓴다."""
+    from .run_p5_neural import E30_LOOKAHEAD, e30_tag, e30_paths, e30_selection_name, e30_plan_name, _staged_spec
+    get = lambda name: (json.load(open(os.path.join(data_dir, name), encoding="utf-8"))
+                        if os.path.exists(os.path.join(data_dir, name)) else None)
+    sel1, sel2, plan = get(e30_selection_name(s, 1)), get(e30_selection_name(s, 2)), get(e30_plan_name(s))
+    ks = range(1, E30_LOOKAHEAD + 1)
+    if plan is None or sel1 is None or any(str(k) not in sel1["stages"] for k in ks):
+        return None
+    r2 = range(int(plan["j_min"]), E30_LOOKAHEAD + 1) if plan["flagged"] else ()
+    if r2 and (sel2 is None or any(str(k) not in sel2["stages"] for k in r2)):
+        return None
+    tags1 = {(k, p_): e30_tag(s, 1, k, p_) for k in ks for p_ in e30_paths(1, k)}
+    tags2 = {(k, p_): e30_tag(s, 2, k, p_) for k in r2 for p_ in e30_paths(2, k, plan)} or None
+    cands1 = {k: {p_: load(data_dir, tags1[(k, p_)]) for p_ in e30_paths(1, k)} for k in ks}
+    cands2 = {k: {p_: load(data_dir, tags2[(k, p_)]) for p_ in e30_paths(2, k, plan)} for k in r2} or None
+    sel = lambda f, rng: {k: {int(s_): v for s_, v in f["stages"][str(k)]["choice"].items()} for k in rng}
+    alltags = set(tags1.values()) | set((tags2 or {}).values())
+    first1 = e30_tag(s, 1, 1, "first")
+    cost = {t: _gpu_hours(data_dir, t) for t in alltags if t != first1}
+    cost[first1] = cost[tags1[(1, "norm")]]
+    reused = set(_staged_spec(s)["reuse"].values())
+    return e30_from_records(cands1, sel(sel1, ks), plan, cands2, sel(sel2, r2) if r2 else None, cost, tags1, tags2,
+                            load(data_dir, first_tag), _gpu_hours(data_dir, first_tag), compare,
+                            new_tags={t for t in alltags if t not in reused})
+
+
+def e30(data_dir: str = DATA_DIR) -> dict | None:
+    """구조마다 1회차 단계 1–7과 계획(울림이 있으면 2회차 단계 j_min–7까지)이 끝났을 때만 판정한다(`_staged_judgment`)."""
+    from .run_p5_neural import E30_STRUCTURES, e28_candidates, E28_SELECTION
+    out = {}
+    for s in E30_STRUCTURES:
+        compare = None
+        if s == "cc" and os.path.exists(os.path.join(data_dir, E28_SELECTION)):
+            s28 = json.load(open(os.path.join(data_dir, E28_SELECTION), encoding="utf-8"))
+            recs = []
+            for k in range(1, 7):
+                c = {p_: {int(r["seed"]): r for r in load(data_dir, t) if r["mode"] == k} for p_, t in e28_candidates(k).items()}
+                recs += [c[p_][int(s_)] for s_, p_ in s28["stages"][str(k)]["choice"].items()]
+            compare = {"full": recs}
+        r = _staged_judgment(data_dir, s, E30_FIRST[s], compare)
+        if r is None:
+            continue
+        pred = E30_PREDICTION[s]
+        if s == "cc":
+            go = r["accurate"] >= E30_GO["accurate_at_least"] and r["cost"]["mean_ratio"] <= E30_GO["mean_cost_ratio_at_most"]
+            r["verdict"] = {"go": bool(go), "go_rule": E30_GO, "prediction": pred,
+                            "hit": {"go": go == pred["go"], "d_full": r["d_full"]["verdict"] == pred["d_full"],
+                                    "false_positives": r["false_positives_round1"] == r["false_positives_final"] == 0}}
+        else:
+            r["verdict"] = {"prediction": pred,
+                            "hit": {"d_first": r["d_first"]["verdict"] == pred["d_first"],
+                                    "false_positives": r["false_positives_round1"] == r["false_positives_final"] == 0}}
+        out[s] = r
+    return out or None
+
+
+
+# ── E30 보조 판독(보완 사전규정 2026-10-30-p5-review-addendum-prespecification.md §4.2–4.5) ──────────────────────
+# 등록 판정(`e30`)은 그대로 두고, 검토 보고서(2026-10-30) §9.4–9.5의 양을 따로 낸다: 비열등(Δ = 0.05, D_full의 등록 구간 아래 끝),
+# 완결성(Z = 단계 1–6이 모두 정확한 시드 수, 시드별 정확 비율 Y_s), 판정 품질(검사 가능/불가능, 거짓 양성, 미검출, 잠정·위쪽 잠정),
+# 최종 부정확 셀의 유형(FEM 식별, `p5_exploit.b2`의 E30 판독), E30 출력의 Rayleigh–Ritz. 판정이 아니다.
+E30_NI_DELTA = 0.05
+
+
+def sorted_seed_accurate(first: list) -> dict:
+    """첫 통과 기록의 정렬 판독을 시드마다 — 감사 Λ 순으로 세운 순위 1–6의 정확 수(`p5_posthoc.order_check`와 같은 규칙)."""
+    lad = {}
+    for r in first:
+        if int(r["mode"]) <= 6:
+            lad.setdefault(int(r["seed"]), {})[int(r["mode"])] = r
+    out = {}
+    for s_, L in sorted(lad.items()):
+        lamref = {k: float(L[k]["Lam_ref"]) for k in L}
+        n = 0
+        for rank, k in zip(sorted(L), sorted(L, key=lambda k_: L[k_]["Lam"])):
+            r = L[k]
+            members = tuple(r.get("cluster") or (r["matched_mode"],))
+            shape = r["outcome"] != "invalid_quadrature" and (r["matched_mode"] == rank or rank in members)
+            n += bool(shape and r["mac"] >= 0.9 and abs(r["Lam"] - lamref[rank]) / lamref[rank] <= 0.05)
+        out[s_] = n
+    return out
+
+
+def e30_chain_quality(chains: dict, t: float = E30_T) -> dict:
+    """chains = {시드: {단계 1–7: 기록}}. 단계 1–6마다 정확(참조), 사다리 안정, 검사 가능(뒤 단계 i ≤ 7 가운데 사다리를 통과한
+    것이 있다), 울림(`e30_order_flags`), 잠정(고른 해가 사다리를 통과하지 못했다)과 위쪽 잠정(앞 단계에 잠정이 있다)을 센다."""
+    c = {k: 0 for k in ("accurate", "accurate_stable", "testable_accurate", "testable_accurate_flagged",
+                        "testable_inaccurate", "testable_inaccurate_flagged", "untestable_accurate", "untestable_inaccurate",
+                        "provisional", "upstream_provisional", "all_accurate_seeds")}
+    share = []
+    for s_, ch in sorted(chains.items()):
+        flags = e30_order_flags(ch, t=t)
+        prov, n = False, 0
+        for j in range(1, 7):
+            r = ch[j]
+            a, stb = bool(accurate(r)), _stable(r)
+            testable = any(_stable(ch[i]) for i in ch if i > j)
+            key = ("testable_" if testable else "untestable_") + ("accurate" if a else "inaccurate")
+            c[key] += 1
+            if testable:
+                c[key + "_flagged"] += j in flags
+            c["accurate"] += a
+            c["accurate_stable"] += a and stb
+            c["upstream_provisional"] += prov
+            if not stb:
+                c["provisional"] += 1
+                prov = True
+            n += a
+        share.append(n)
+        c["all_accurate_seeds"] += n == 6
+    c["seed_accurate_counts"] = {f"{k}/6": int(sum(v == k for v in share)) for k in range(7)}
+    return c
+
+
+def _ident_class(k: int, ident: dict) -> str:
+    """부정확한 단계 k의 출력을 FEM 식별로 나눈다 — 고유값(형상은 맞다), 더 높은 모드, 낮은 모드, 섞임, 미식별."""
+    mac, cl = float(ident["best_mac"]), [int(v) for v in ident["cluster"]]
+    if mac >= 0.9:
+        return "eigenvalue" if k in cl else ("higher" if min(cl) > k else "lower")
+    return "mixture" if mac >= 0.5 else "unidentified"
+
+
+def _e30_chains(data_dir: str, s: str) -> dict | None:
+    """최종 사슬과 1회차 사슬 {이름: {시드: {단계 1–7: 기록}}} — `run_p5_neural.e30_chain_choice`로 다시 짓는다."""
+    from .run_p5_neural import E30_LOOKAHEAD, _e30_files, e30_chain_choice
+    sel1, sel2, plan = _e30_files(data_dir, s)
+    if sel1 is None or plan is None or any(str(k) not in sel1["stages"] for k in range(1, E30_LOOKAHEAD + 1)):
+        return None
+    if plan["flagged"] and (sel2 is None or any(str(k) not in sel2["stages"]
+                                                  for k in range(int(plan["j_min"]), E30_LOOKAHEAD + 1))):
+        return None
+    cache = {}
+
+    def rec(tag, seed, k):
+        if tag not in cache:
+            cache[tag] = {(int(r["seed"]), int(r["mode"])): r for r in load(data_dir, tag)}
+        return cache[tag][(seed, k)]
+
+    seeds = sorted(int(v) for v in sel1["stages"]["1"]["choice"])
+    out = {}
+    for name, s2 in (("final", sel2 if plan["flagged"] else None), ("round1", None)):
+        out[name] = {s_: {k: rec(e30_chain_choice(s, k, s_, sel1, s2, plan if s2 else None)[2], s_, k)
+                          for k in range(1, E30_LOOKAHEAD + 1)} for s_ in seeds}
+    return out
+
+
+def e30_readouts(data_dir: str = DATA_DIR, res: dict | None = None, B: int = B_DEFAULT, seed: int = SEED) -> dict | None:
+    """보완 사전규정 §4.2–4.5의 보조 판독. `res`는 `e30`의 결과(없으면 계산한다)."""
+    from .run_p5_neural import E28_SELECTION, E30_STRUCTURES, e28_candidates
+    res = e30(data_dir) if res is None else res
+    if not res:
+        return None
+    rr_json = os.path.join(data_dir, "p5_exploit_rr_e30.json")
+    rr_csv = os.path.join(data_dir, "p5_exploit_rr_e30.csv")
+    rr = json.load(open(rr_json, encoding="utf-8")) if os.path.exists(rr_json) else {}
+    rr_rows = []
+    if os.path.exists(rr_csv):
+        with open(rr_csv, encoding="utf-8") as f:
+            rr_rows = list(csv.DictReader(f))
+    out = {}
+    for s in E30_STRUCTURES:
+        if s not in res:
+            continue
+        ch = _e30_chains(data_dir, s)
+        first = load(data_dir, E30_FIRST[s])
+        srt = sorted_seed_accurate(first)
+        q = {name: e30_chain_quality(c) for name, c in ch.items()}
+        fp_by = {}
+        for r in first:
+            if int(r["mode"]) <= 6:
+                fp_by.setdefault(int(r["seed"]), []).append(bool(accurate(r)))
+        z = {"final": q["final"]["all_accurate_seeds"], "round1": q["round1"]["all_accurate_seeds"],
+             "first_pass": int(sum(all(v) for v in fp_by.values())), "first_pass_sorted": int(sum(v == 6 for v in srt.values())),
+             "first_pass_sorted_accurate": int(sum(srt.values()))}
+        r_s = {"quality": q, "completeness": z}
+        if s == "cc" and "d_full" in res[s]:
+            lo = float(res[s]["d_full"]["contrast"][1])
+            r_s["noninferiority"] = {"delta": E30_NI_DELTA, "contrast": res[s]["d_full"]["contrast"], "lower": lo,
+                                     "noninferior": bool(lo > -E30_NI_DELTA)}
+            if os.path.exists(os.path.join(data_dir, E28_SELECTION)):
+                s28 = json.load(open(os.path.join(data_dir, E28_SELECTION), encoding="utf-8"))
+                acc28 = {}
+                for k in range(1, 7):
+                    c_ = {p_: {int(r["seed"]): r for r in load(data_dir, t) if r["mode"] == k} for p_, t in e28_candidates(k).items()}
+                    for s_, p_ in s28["stages"][str(k)]["choice"].items():
+                        acc28.setdefault(int(s_), []).append(bool(accurate(c_[p_][int(s_)])))
+                z["e28a_chain"] = int(sum(all(v) for v in acc28.values()))
+        # 최종 부정확 셀의 유형(FEM 식별, b2의 최종 사슬 판독)
+        lab = f"e30 {s} final seven"
+        if lab in rr:
+            ident = {int(x["seed"]): x.get("stage_ident") for x in rr[lab]["per_seed"]}
+            types = {}
+            for s_, c in ch["final"].items():
+                for k in range(1, 7):
+                    if not accurate(c[k]) and ident.get(s_):
+                        t_ = _ident_class(k, ident[s_][k - 1])
+                        types[t_] = types.get(t_, 0) + 1
+            r_s["final_inaccurate_types"] = dict(sorted(types.items()))
+        # E30 출력의 Rayleigh–Ritz(서술, 규칙 없음)
+        fin = {s_: sum(bool(accurate(c[k])) for k in range(1, 7)) for s_, c in ch["final"].items()}
+        rr_s = {}
+        for name in ("final seven", "round1 seven", "pool"):
+            lab = f"e30 {s} {name}"
+            if lab not in rr:
+                continue
+            per = {}
+            for row in rr_rows:
+                if row["label"] == lab:
+                    per[int(row["seed"])] = per.get(int(row["seed"]), 0) + (row["rr_accurate"] == "True")
+            seeds = sorted(fin)
+            a = np.array([per.get(s_, 0) / 6 for s_ in seeds])
+            b = np.array([fin[s_] / 6 for s_ in seeds])
+            rr_s[name] = {k_: rr[lab][k_] for k_ in ("rr_accurate", "rr_accurate_stable", "rr_all_accurate_seeds", "rr_fail",
+                                                      "missing_modes", "dropped", "cond_max", "seconds_rr", "device")
+                          if k_ in rr[lab]}
+            rr_s[name]["vs_final_described"] = paired_bootstrap(a, b, B, seed)
+        if rr_s:
+            r_s["rayleigh_ritz"] = rr_s
+        out[s] = r_s
+    return out or None
+
+# ── E31 (사전규정 2026-11-03-p5-e31-prespecification.md) — 정책을 고정한 보류 평가와 같은 예산 대조(B3) ────────────────────
+# 보류 구조(양단 고정 h/L 0.07, L-브래킷 a 0.4)의 판정량은 E30과 같은 `_staged_judgment`이고, 첫 통과는 그 구조의 E31 첫 통과다.
+# 예측(자료 전 기록)은 적중 여부만 적는다 — 투고처나 정책을 정하지 않는다. B3은 E30-cc 최종 사슬과 시드 짝으로 견준다.
+E31_PREDICTION = {s: {"accurate_at_least": 114, "false_positives": 0, "mean_cost_ratio_at_most": 3.0,
+                      "d_first_rule1_if_first_pass_at_most": 108} for s in ("cc07", "lb04")}
+B3_PREDICTION = {"d_e30_final": "rule1", "accurate_at_most": 116}
+
+
+def e31(data_dir: str = DATA_DIR) -> dict | None:
+    """보류 구조마다 첫 통과와 단계적 배분(1회차, 계획, 울림이 있으면 2회차)이 끝났을 때만 판정한다."""
+    from .run_p5_neural import E31_STRUCTURES, E31_FP_TAGS
+    out = {}
+    for s in E31_STRUCTURES:
+        if not os.path.exists(os.path.join(data_dir, f"manifest_p5_neural_{E31_FP_TAGS[s]}.json")):
+            continue
+        r = _staged_judgment(data_dir, s, E31_FP_TAGS[s])
+        if r is None:
+            continue
+        pred = E31_PREDICTION[s]
+        cond = r["first_pass_accurate"] <= pred["d_first_rule1_if_first_pass_at_most"]
+        r["verdict"] = {"prediction": pred, "hit": {
+            "accurate": r["accurate"] >= pred["accurate_at_least"],
+            "false_positives": r["false_positives_round1"] == r["false_positives_final"] == 0,
+            "cost": r["cost"]["mean_ratio"] <= pred["mean_cost_ratio_at_most"],
+            "d_first": (r["d_first"]["verdict"] == "rule1") if cond else None}}
+        out[s] = r
+    return out or None
+
+
+def _sorted_from_ident(per_seed: list, lamref: dict, m: int) -> int:
+    """B2 단계별 FEM 식별(`stage_ident`)에서 앞 m개 출력을 감사 Λ 순으로 세운 순위 1–6의 정확 수 — 순위 r의 출력이 모드 r(또는 r을
+    담은 군집)이고 MAC ≥ 0.9, |Λ − λ*_r|/λ*_r ≤ 0.05(정렬 판독과 같은 규칙)."""
+    n = 0
+    for x in per_seed:
+        srt = sorted(x["stage_ident"][:m], key=lambda d: d["lam"])[:6]
+        n += sum(((d["best_mode"] == r) or (r in d["cluster"])) and d["best_mac"] >= 0.9
+                 and abs(d["lam"] - lamref[r]) / lamref[r] <= 0.05 for r, d in enumerate(srt, 1))
+    return int(n)
+
+
+def e31_readouts(data_dir: str = DATA_DIR, res: dict | None = None, rr_name: str = "p5_exploit_rr_e31.json") -> dict | None:
+    """E31 보조 판독(판정 아님) — 판정 품질·완결성(E30과 같은 양), 단계 7의 비교 가능성·검출, 첫 통과·1회차·최종 사슬의 정렬과
+    Rayleigh–Ritz(`p5_exploit.b2(groups=('e31',))`), 최종 부정확 셀의 유형, B3의 Rayleigh–Ritz."""
+    from .run_p5_neural import E31_FP_TAGS
+    res = e31(data_dir) if res is None else res
+    p = os.path.join(data_dir, rr_name)
+    rr = json.load(open(p, encoding="utf-8")) if os.path.exists(p) else {}
+    keep = ("rr_accurate", "rr_accurate_stable", "rr_all_accurate_seeds", "rr_fail", "missing_modes", "dropped", "cond_max",
+            "sorted_accurate", "first_accurate", "seconds_rr", "device")
+    out = {}
+    for s in (res or {}):
+        ch = _e30_chains(data_dir, s)
+        first = load(data_dir, E31_FP_TAGS[s])
+        lamref = {int(r["mode"]): float(r["Lam_ref"]) for r in first if int(r["seed"]) == 0 and int(r["mode"]) <= 6}
+        srt = sorted_seed_accurate(first)
+        q = {name: e30_chain_quality(c) for name, c in ch.items()}
+        fp_by = {}
+        for r in first:
+            if int(r["mode"]) <= 6:
+                fp_by.setdefault(int(r["seed"]), []).append(bool(accurate(r)))
+        r_s = {"quality": q,
+               "completeness": {"final": q["final"]["all_accurate_seeds"], "round1": q["round1"]["all_accurate_seeds"],
+                                "first_pass": int(sum(all(v) for v in fp_by.values())),
+                                "first_pass_sorted": int(sum(v == 6 for v in srt.values())),
+                                "first_pass_sorted_accurate": int(sum(srt.values()))},
+               "stage7": {name: {"stable": int(sum(_stable(c[s_][7]) for s_ in c)),
+                                 "stage6_flags": int(sum(6 in e30_order_flags(c[s_]) for s_ in c)),
+                                 "stage6_inaccurate": int(sum(not accurate(c[s_][6]) for s_ in c))}
+                          for name, c in ch.items()}}
+        rr_s = {}
+        for name, lab in (("first pass", f"first {s}"), ("final seven", f"e31 {s} final seven"),
+                          ("round1 seven", f"e31 {s} round1 seven"), ("pool", f"e31 {s} pool")):
+            if lab not in rr:
+                continue
+            rr_s[name] = {k_: rr[lab][k_] for k_ in keep if k_ in rr[lab]}
+            per = rr[lab].get("per_seed") or []
+            if per and all(x.get("stage_ident") for x in per):
+                m = len(per[0]["stage_ident"])
+                rr_s[name]["sorted_first_six"] = _sorted_from_ident(per, lamref, min(m, 6))
+                if m >= 7:
+                    rr_s[name]["sorted_seven"] = _sorted_from_ident(per, lamref, 7)
+                    modes7 = [int(x["stage_ident"][6]["best_mode"]) for x in per]
+                    rr_s[name]["stage7_modes"] = {str(v): modes7.count(v) for v in sorted(set(modes7))}
+        if rr_s:
+            r_s["rayleigh_ritz"] = rr_s
+        lab = f"e31 {s} final seven"
+        if lab in rr:
+            ident = {int(x["seed"]): x.get("stage_ident") for x in rr[lab]["per_seed"]}
+            types = {}
+            for s_, c in ch["final"].items():
+                for k in range(1, 7):
+                    if not accurate(c[k]) and ident.get(s_):
+                        t_ = _ident_class(k, ident[s_][k - 1])
+                        types[t_] = types.get(t_, 0) + 1
+            r_s["final_inaccurate_types"] = dict(sorted(types.items()))
+        out[s] = r_s
+    if "b3 cc" in rr:
+        out["b3"] = {k_: rr["b3 cc"][k_] for k_ in keep if k_ in rr["b3 cc"]}
+    return out or None
+
+
+def b3_from_records(b3: list, final: list, round1: list, first: list, cost_b3: float, cost_first: float,
+                    B: int = B_DEFAULT, seed: int = SEED) -> dict:
+    """B3(한 실행, 단계 1–6)과 E30-cc 최종·1회차 사슬, 첫 통과(E26b)의 시드 짝 비교. 대비는 E30 − B3(E30이 나으면 규칙 1)와
+    B3 − 첫 통과다. 순서 검사·정렬은 판독으로만 센다(단계 7이 없어 단계 6은 검사할 수 없다)."""
+    rep = tuple(range(1, 7))
+    share = lambda recs: _seed_share(recs, accurate, rep)
+    acc = {k: int(sum(accurate(r) for r in b3 if r["mode"] == k)) for k in rep}
+    out = {"accurate_by_stage": acc, "accurate": int(sum(acc.values())), "e30_final_accurate": _n_acc(final, rep),
+           "e30_round1_accurate": _n_acc(round1, rep), "first_pass_accurate": _n_acc(first, rep)}
+    for name, recs in (("e30_final", final), ("e30_round1", round1)):
+        ci = paired_bootstrap(share(recs), share(b3), B, seed)
+        out[f"d_{name}"] = {"contrast": ci, "verdict": _rule(ci)}
+    ci = paired_bootstrap(share(b3), share(first), B, seed)
+    out["d_first"] = {"contrast": ci, "verdict": _rule(ci)}
+    chains = {}
+    for r in b3:
+        if r["mode"] in rep:
+            chains.setdefault(int(r["seed"]), {})[int(r["mode"])] = r
+    flags = {s_: e30_order_flags(c) for s_, c in sorted(chains.items())}
+    out["order_check"] = {"flags": int(sum(len(v) for v in flags.values())),
+                          "false_positives": int(sum(accurate(chains[s_][j]) for s_, v in flags.items() for j in v)),
+                          "inaccurate_stages_1_5": int(sum(not accurate(c[j]) for c in chains.values() for j in range(1, 6))),
+                          "by_seed": {str(s_): v for s_, v in flags.items() if v}}
+    out["sorted_accurate"] = int(sum(sorted_seed_accurate(b3).values()))
+    out["cost"] = {"gpu_h": float(cost_b3), "first_pass_gpu_h": float(cost_first), "ratio": float(cost_b3 / cost_first)}
+    return out
+
+
+def b3(data_dir: str = DATA_DIR, res30: dict | None = None) -> dict | None:
+    """B3 판정. E30-cc의 최종·1회차 사슬이 있어야 한다. `res30`(E30 판정)이 있으면 E30의 시드 평균 비용 비를 함께 적는다."""
+    from .run_p5_neural import B3_TAG
+    if not os.path.exists(os.path.join(data_dir, f"manifest_p5_neural_{B3_TAG}.json")):
+        return None
+    ch = _e30_chains(data_dir, "cc")
+    if ch is None:
+        return None
+    flat = lambda c: [c[s_][k] for s_ in sorted(c) for k in range(1, 7)]
+    r = b3_from_records(load(data_dir, B3_TAG), flat(ch["final"]), flat(ch["round1"]), load(data_dir, E30_FIRST["cc"]),
+                        _gpu_hours(data_dir, B3_TAG), _gpu_hours(data_dir, E30_FIRST["cc"]))
+    if res30 and "cc" in res30:
+        r["cost"]["e30_mean_ratio"] = float(res30["cc"]["cost"]["mean_ratio"])
+    r["verdict"] = {"prediction": B3_PREDICTION,
+                    "hit": {"d_e30_final": r["d_e30_final"]["verdict"] == B3_PREDICTION["d_e30_final"],
+                            "accurate": r["accurate"] <= B3_PREDICTION["accurate_at_most"]}}
+    return r
+
+
+# ── E31r(사전규정 2026-11-07-p5-e31r-prespecification.md) — E31-lb04 단계 6의 사후 재풀이 판독 ─────────────────────
+# 울렸다면(가상: 20시드 모두 j* = 6) 2회차가 단계 6에서 고를 네 경로(1회차의 first·norm, E31r의 ff·long)에 2회차의 고르기 규칙
+# (`e30_select_stage`)을 그대로 적용한다. 등록 판정이 아니다 — E31의 판정은 바뀌지 않는다. 예측은 자료 전에 적었다.
+E31R_PREDICTION = {"long_accurate_at_least": 10, "stage6_accurate_at_least": 10, "d_round1": "rule1",
+                   "selection_missed_at_most": 2}
+
+
+def e31r_from_records(stage6: dict, chain: list, B: int = B_DEFAULT, seed: int = SEED) -> dict:
+    """stage6 = {경로: 단계 6 기록 목록}(이 순서가 동률을 깬다), chain = 1회차 사슬의 단계 1–6 기록. 가상 사슬은 단계 6만 네 경로에서
+    고른 해로 바꾼 것이다. `selection_missed`는 정확한 경로가 있었는데 고른 해가 부정확한 시드다."""
+    k, rep = 6, tuple(range(1, 7))
+    by = {p_: {int(r["seed"]): r for r in recs if int(r["mode"]) == k} for p_, recs in stage6.items()}
+    paths = tuple(stage6)
+    seeds = sorted(by[paths[0]])
+    choice = e30_select_stage(stage6, k, {s_: paths for s_ in seeds})
+    picked = {s_: by[choice[s_]][s_] for s_ in seeds}
+    hyp = [r for r in chain if int(r["mode"]) != k] + [picked[s_] for s_ in seeds]
+    share = lambda recs: _seed_share(recs, accurate, rep)
+    ci = paired_bootstrap(share(hyp), share(chain), B, seed)
+    shape6 = lambda r: int(r["matched_mode"]) == k and r["mac"] >= 0.9
+    some = [s_ for s_ in seeds if any(accurate(by[p_][s_]) for p_ in paths)]
+    count = lambda pred: {p_: int(sum(pred(by[p_][s_]) for s_ in seeds)) for p_ in paths}
+    return {"accurate_by_path": count(accurate), "mode6_shape_by_path": count(shape6),
+            "unstable_by_path": count(lambda r: not _stable(r)),
+            "chosen": {p_: int(sum(choice[s_] == p_ for s_ in seeds)) for p_ in paths},
+            "stage6_accurate": int(sum(accurate(picked[s_]) for s_ in seeds)),
+            "seeds_with_an_accurate_path": len(some),
+            "selection_missed": [s_ for s_ in some if not accurate(picked[s_])],
+            "round1_accurate": _n_acc(chain, rep), "hypothetical_accurate": _n_acc(hyp, rep),
+            "d_round1": {"contrast": ci, "verdict": _rule(ci)},
+            "per_seed": {str(s_): {"chosen": choice[s_], **{p_: [float(by[p_][s_]["Lam"]), bool(accurate(by[p_][s_]))]
+                                                             for p_ in paths}} for s_ in seeds}}
+
+
+def e31r(data_dir: str = DATA_DIR) -> dict | None:
+    """E31r 판독. ff·long 실행과 E31-lb04의 1회차 사슬이 있을 때만 낸다. 비용은 두 실행의 GPU-시간과 첫 통과 대비의 더한 비다."""
+    from .run_p5_neural import E31_FP_TAGS, E31R_PATHS, E31R_STAGE, E31R_STRUCTURE, e30_tag, e31r_tag
+    tags = {p_: e31r_tag(p_) for p_ in E31R_PATHS}
+    if not all(os.path.exists(os.path.join(data_dir, f"manifest_p5_neural_{t}.json")) for t in tags.values()):
+        return None
+    ch = _e30_chains(data_dir, E31R_STRUCTURE)
+    if ch is None:
+        return None
+    base = {p_: e30_tag(E31R_STRUCTURE, 1, E31R_STAGE, p_) for p_ in ("first", "norm")}
+    stage6 = {p_: load(data_dir, t) for p_, t in {**base, **tags}.items()}
+    chain = [ch["round1"][s_][k] for s_ in sorted(ch["round1"]) for k in range(1, 7)]
+    r = e31r_from_records(stage6, chain)
+    gh = {p_: _gpu_hours(data_dir, t) for p_, t in tags.items()}
+    first = _gpu_hours(data_dir, E31_FP_TAGS[E31R_STRUCTURE])
+    r["cost"] = {"gpu_h": gh, "first_pass_gpu_h": first, "added_ratio": float(sum(gh.values()) / first)}
+    pred = E31R_PREDICTION
+    r["verdict"] = {"prediction": pred, "hit": {
+        "long": r["accurate_by_path"]["long"] >= pred["long_accurate_at_least"],
+        "stage6": r["stage6_accurate"] >= pred["stage6_accurate_at_least"],
+        "d_round1": r["d_round1"]["verdict"] == pred["d_round1"],
+        "selection": len(r["selection_missed"]) <= pred["selection_missed_at_most"]}}
+    return r
+
+
+# E31p — E31-lb04 단계 6의 표현 판독(사전규정 2026-11-08-p5-e31p-prespecification.md). E21f와 같은 규칙의 사후 판독이고, E31의
+# 등록 판정은 바뀌지 않는다. 예측은 데이터 전에 여기 적는다.
+E31P_FILES = {6: "p5_e1_oracle_fit_e31p_lb04_m6.csv", 7: "p5_e1_oracle_fit_e31p_lb04_m7.csv"}
+E31P_PREDICTION = {"verdict": "rule1", "n_below_own_stage6_at_least": 18, "control_ok": True}
+
+
+def e31p_from_rows(rows6, rows7, stage6: dict, stage6_round1: dict | None = None) -> dict:
+    """주 판정(E21f의 규칙): 모드 6에 맞춘 망을 E31-lb04 첫 통과의 저장 모드 1–5로 정확 사영한 Rayleigh 몫의 중앙값이 첫 통과
+    단계 6의 Λ 중앙값보다 낮으면 규칙 1(더 낮은 함수가 시행공간에 있었는데 최적화가 놓쳤다), 아니면 규칙 2(정하지 못함).
+    시드마다 같은 시드 단계 6의 Λ와도 견준다. 대조: 모드 7 적합의 맞춘 격자 밖 e_λ 중앙값이 0.05 미만이면 적합 절차가 그
+    정확도를 낸다. `stage6_round1`(있으면)은 1회차 사슬 단계 6의 Λ — 서술용이다."""
+    d6 = {int(r["seed"]): float(r["Lam_deflated"]) for r in rows6}
+    d7 = {int(r["seed"]): float(r["Lam_deflated"]) for r in rows7}
+    ld, le = float(np.median(list(d6.values()))), float(np.median(list(stage6.values())))
+    med = lambda rows, key: float(np.median([float(r[key]) for r in rows]))
+    e7 = med(rows7, "e_lam_check_0")
+    out = {"lam_deflated_median": ld, "lam_stage6_median": le, "verdict": "rule1" if ld < le else "rule2",
+           "n_below_own_stage6": int(sum(d6[s_] < stage6[s_] for s_ in d6)),
+           "lam_deflated_range": [float(min(d6.values())), float(max(d6.values()))],
+           "lam_stage6_range": [float(min(stage6.values())), float(max(stage6.values()))],
+           "e_lam_held_out_median": {"6": med(rows6, "e_lam_check_0"), "7": e7},
+           "mac_held_out_median": {"6": med(rows6, "mac_check_0"), "7": med(rows7, "mac_check_0")},
+           "control_ok": bool(e7 < E21F_CONTROL_RULE),
+           "lam_deflated_7_median": float(np.median(list(d7.values()))),
+           "n7_below_own_stage6": int(sum(d7[s_] < stage6[s_] for s_ in d7))}
+    if stage6_round1 is not None:
+        out["n_below_round1_stage6"] = int(sum(d6[s_] < stage6_round1[s_] for s_ in d6))
+    return out
+
+
+def e31p(data_dir: str = DATA_DIR) -> dict | None:
+    import csv
+    from .run_p5_neural import E31_FP_TAGS
+    try:
+        rows = {m: list(csv.DictReader(open(os.path.join(data_dir, f), encoding="utf-8")))
+                for m, f in E31P_FILES.items()}
+        fp = load(data_dir, E31_FP_TAGS["lb04"])
+    except FileNotFoundError:
+        return None
+    st6 = {int(r["seed"]): float(r["Lam"]) for r in fp if int(r["mode"]) == 6}
+    ch = _e30_chains(data_dir, "lb04")
+    r1 = {int(s_): float(c[6]["Lam"]) for s_, c in ch["round1"].items()} if ch else None
+    r = e31p_from_rows(rows[6], rows[7], st6, r1)
+    pred = E31P_PREDICTION
+    r["verdict_prediction"] = {"prediction": pred, "hit": {
+        "verdict": r["verdict"] == pred["verdict"],
+        "n_below_own_stage6": r["n_below_own_stage6"] >= pred["n_below_own_stage6_at_least"],
+        "control_ok": r["control_ok"] == pred["control_ok"]}}
+    return r
+
+
+# E32 — 대수 층 보강(사전규정 2026-11-09-p5-e32-prespecification.md). 저장 관행(감사 격자에서 직교화해 저장하고 쓸 때 자기 계수로
+# 뺀다, 원고 식 (3))을 T-브래킷 원좌표 첫 통과(정확 사영·원시 저장)와 같은 시드·같은 표본에서, 기준 구조에서는 B = 283에서 같은
+# 표본의 정확 사영 대조와 함께 돌린다. 판정량은 E15와 같은 게이트 없는 정확도(모드 4–6)이고, 드리프트는 실행이 훈련 표본 위에서
+# 기록한 max|C|(`batch_offdiag`, 단계 마지막 10 % 평균)의 시드 중앙이다. 예측은 데이터 전에 여기 적는다.
+E32_TAGS = {"tb_storage": "e32_tb_orth_mc", "b283_storage": "e32_b283_orth_mc", "b283_exact": "e32_b283_exact_mc"}
+E32_TB_EXACT = "e26_tb_raw_mc"                 # E26d — 같은 설정의 정확 사영 첫 통과
+E32_B_STORAGE = {283: "e32_b283_orth_mc", 1134: "e15r", 4536: "e20r_b4"}
+E32_B_EXACT = {283: "e32_b283_exact_mc", 1134: "e15b"}
+E32_DRIFT_STAGES = (4, 5, 6)
+E32_DRIFT_FILE = "p5_exploit_e32_drift_prediction.csv"
+# 자료 전 예측(드리프트 예측 `E32_DRIFT_FILE`을 본 뒤, 신경망 실행 전에 적었다 — 사전규정 §4).
+E32_PREDICTION = {"tb_verdict": "rule1", "tb_storage_modes_at_most": {4: 10, 5: 10}, "tb_failing_mass_at_most": 0.01,
+                  "tb_drift_factor": 1.25, "tb_drift_stages": [3, 4],
+                  "b283_verdict": "rule1", "b283_exact_acc_4_6_at_least": 50,
+                  "b283_ratio_range": [1.7, 2.5], "b283_ratio_stages": [4]}
+
+
+def shape_kept(rec, mac_min: float = 0.9) -> bool:
+    """목표 모드의 형상(짝 모드 = 단계, MAC ≥ 0.9)은 지켰는가 — 고유값만 틀린 셀을 가른다."""
+    return int(rec["matched_mode"]) == int(rec["mode"]) and rec["mac"] >= mac_min
+
+
+def _median_or_none(v):
+    v = [float(x) for x in v if x is not None and np.isfinite(x)]
+    return float(np.median(v)) if v else None
+
+
+def e32_arm(recs) -> dict:
+    """실행 하나의 서술: 모드별 정확 셀, 모드 4–6 정확 셀, 모드별 남은 질량 중앙, 단계별 드리프트 중앙(저장 관행이면 저장 함수의,
+    정확 사영이면 원시 출력의 비대각), 사다리 안정 셀, 정확하지 않은 모드 4–6 셀(형상을 지킨 수, 결과 분류, 남은 질량, e_λ)."""
+    by_mode = lambda f: {m: f([r for r in recs if int(r["mode"]) == m]) for m in range(1, 7)}
+    fail = [r for r in recs if r["mode"] in WALL_MODES and not accurate(r)]
+    outcomes = {}
+    for r in fail:
+        outcomes[r["outcome"]] = outcomes.get(r["outcome"], 0) + 1
+    return {"accurate_by_mode": by_mode(lambda c: int(sum(accurate(r) for r in c))), "acc_4_6": _n_acc(recs),
+            "remaining_mass_median_by_mode": by_mode(lambda c: _median_or_none([r["projected_mass_fraction"] for r in c])),
+            "remaining_mass_median_4_6": _median_or_none([r["projected_mass_fraction"] for r in recs
+                                                          if r["mode"] in WALL_MODES]),
+            "drift_median_by_stage": {m: _median_or_none([r.get("batch_offdiag") for r in recs if int(r["mode"]) == m])
+                                      for m in (3, 4, 5, 6)},
+            "ladder_stable": int(sum(_stable(r) for r in recs)),
+            "failing_4_6": {
+                "n": len(fail), "shape_kept": int(sum(shape_kept(r) for r in fail)), "outcomes": outcomes,
+                "remaining_mass_median": _median_or_none([r["projected_mass_fraction"] for r in fail]),
+                "e_lam_median_by_mode": {m: _median_or_none([r["e_lam"] for r in fail if int(r["mode"]) == m])
+                                         for m in WALL_MODES}}}
+
+
+def e32_pair(recs_exact, recs_storage, B: int = B_DEFAULT, seed: int = SEED) -> dict:
+    """같은 시드·같은 표본에서 정확 사영(원시 저장)과 저장 관행. D = acc₄₋₆(정확) − acc₄₋₆(저장 관행), 시드 짝지음,
+    규칙 1: 0 제외·양수, 규칙 2: 0 포함, 규칙 3: 0 제외·음수. 두 실행의 서술(`e32_arm`)을 함께 둔다."""
+    ci = paired_bootstrap(_seed_share(recs_exact, accurate), _seed_share(recs_storage, accurate), B, seed)
+    return {"contrast": ci, "verdict": _rule(ci), "exact": e32_arm(recs_exact), "storage": e32_arm(recs_storage)}
+
+
+def e32_drift_law(drift: dict, stages=E32_DRIFT_STAGES) -> dict:
+    """{B: {단계: 드리프트 중앙}} → 단계마다 log 드리프트의 log B 최소제곱 기울기(세 점 이상일 때)와 B 283 대 1,134의 비."""
+    out = {}
+    for k in stages:
+        pts = sorted((int(B), v[k]) for B, v in drift.items() if v.get(k) is not None and v[k] > 0)
+        slope = (float(np.polyfit(np.log([p[0] for p in pts]), np.log([p[1] for p in pts]), 1)[0])
+                 if len(pts) >= 3 else None)
+        d = dict(pts)
+        out[k] = {"slope": slope, "ratio_283_1134": (d[283] / d[1134] if 283 in d and 1134 in d else None),
+                  "points": [[B, v] for B, v in pts]}
+    return out
+
+
+def e32_prediction_medians(rows, source: str, B: int) -> dict:
+    """드리프트 예측 파일(`p5_exploit.e32_drift_prediction`)에서 한 출처·한 표본 크기의 단계별 시드 중앙."""
+    out = {}
+    for r in rows:
+        if r["source"] == source and int(r["B"]) == int(B):
+            out.setdefault(int(r["stage"]), []).append(float(r["drift"]))
+    return {k: float(np.median(v)) for k, v in sorted(out.items())}
+
+
+def e32_from_records(tb_storage, tb_exact, storage_by_B: dict, b283_exact, pred_rows=None,
+                     B: int = B_DEFAULT, seed: int = SEED) -> dict:
+    """T-브래킷 쌍(주 판정 D_T), 기준 구조 B = 283의 쌍(D_283), 세 B의 드리프트 법칙. `storage_by_B`는 {B: 저장 관행 기록}."""
+    out = {"tbracket": e32_pair(tb_exact, tb_storage, B, seed),
+           "b283": e32_pair(b283_exact, storage_by_B[283], B, seed),
+           "storage_by_B": {int(b): e32_arm(rs) for b, rs in storage_by_B.items()}}
+    out["drift_law"] = e32_drift_law({b: v["drift_median_by_stage"] for b, v in out["storage_by_B"].items()})
+    if pred_rows:
+        out["drift_prediction"] = {
+            "tbracket_from_e26d": e32_prediction_medians(pred_rows, E32_TB_EXACT, 1651),
+            "b283_from_e15r": e32_prediction_medians(pred_rows, "e15r", 283),
+            "b283_from_e15b": e32_prediction_medians(pred_rows, "e15b", 283)}
+    return out
+
+
+def e32_hits(r: dict, pred: dict) -> dict:
+    """자료 전 예측(`E32_PREDICTION`)과 견준 적중. 키가 없는 예측은 매기지 않는다."""
+    t, b, law = r["tbracket"], r["b283"], r["drift_law"]
+    hit = {}
+    if "tb_verdict" in pred:
+        hit["tb_verdict"] = t["verdict"] == pred["tb_verdict"]
+    if "tb_storage_acc_4_6_at_most" in pred:
+        hit["tb_storage_acc_4_6"] = t["storage"]["acc_4_6"] <= pred["tb_storage_acc_4_6_at_most"]
+    if "tb_storage_modes_at_most" in pred:
+        hit["tb_storage_modes"] = all(t["storage"]["accurate_by_mode"][int(m)] <= n
+                                      for m, n in pred["tb_storage_modes_at_most"].items())
+    if "tb_failing_mass_at_most" in pred:
+        m = t["storage"]["failing_4_6"]["remaining_mass_median"]
+        hit["tb_failing_mass"] = m is not None and m <= pred["tb_failing_mass_at_most"]
+    if "tb_drift_factor" in pred and r.get("drift_prediction"):
+        f, pm, got = pred["tb_drift_factor"], r["drift_prediction"]["tbracket_from_e26d"], t["storage"]["drift_median_by_stage"]
+        hit["tb_drift"] = all(got.get(k) is not None and pm[k] / f <= got[k] <= pm[k] * f for k in pred["tb_drift_stages"])
+    if "b283_ratio_range" in pred:
+        lo, hi = pred["b283_ratio_range"]
+        hit["b283_ratio"] = all(law[k]["ratio_283_1134"] is not None and lo <= law[k]["ratio_283_1134"] <= hi
+                                for k in pred["b283_ratio_stages"])
+    if "b283_verdict" in pred:
+        hit["b283_verdict"] = b["verdict"] == pred["b283_verdict"]
+    if "b283_exact_acc_4_6_at_least" in pred:
+        hit["b283_exact_acc_4_6"] = b["exact"]["acc_4_6"] >= pred["b283_exact_acc_4_6_at_least"]
+    if "b283_storage_modes_at_most" in pred:
+        hit["b283_storage_modes"] = all(b["storage"]["accurate_by_mode"][int(m)] <= n
+                                        for m, n in pred["b283_storage_modes_at_most"].items())
+    return hit
+
+
+def e32(data_dir: str = DATA_DIR) -> dict | None:
+    import csv
+    try:
+        tb = load(data_dir, E32_TAGS["tb_storage"])
+        tbe = load(data_dir, E32_TB_EXACT)
+        sto = {b: load(data_dir, t) for b, t in E32_B_STORAGE.items()}
+        b283e = load(data_dir, E32_B_EXACT[283])
+    except FileNotFoundError:
+        return None
+    p = os.path.join(data_dir, E32_DRIFT_FILE)
+    rows = list(csv.DictReader(open(p, encoding="utf-8"))) if os.path.exists(p) else None
+    r = e32_from_records(tb, tbe, sto, b283e, rows)
+    if E32_PREDICTION is not None:
+        r["verdict_prediction"] = {"prediction": E32_PREDICTION, "hit": e32_hits(r, E32_PREDICTION)}
+    return r
 
 
 # E22 — 두 층 이종재료(사전규정 2026-10-04-p5-e22-prespecification.md). E21과 같은 규칙에 같은 기하의
@@ -1045,7 +2578,10 @@ def main(data_dir: str = DATA_DIR, outdir: str | None = None) -> dict:
            "e17": e17(data_dir), "e18": e18(data_dir), "e19": e19(data_dir), "e20": e20(data_dir),
            "e21": e21(data_dir), "e21b": e21b(data_dir), "e21c": e21c(data_dir),
            "e21d": e21d(data_dir), "e21e": e21e(data_dir), "e21f": e21f(data_dir),
-           "e21g": e21g(data_dir), "e21h": e21h(data_dir),
+           "e21g": e21g(data_dir), "e21h": e21h(data_dir), "e23": e23(data_dir),
+           "e24": e24(data_dir), "e25": e25(data_dir), "e26": e26(data_dir), "e26e": e26e(data_dir), "e27": e27(data_dir), "e28": e28(data_dir), "e29": e29(data_dir), "e30": (r30 := e30(data_dir)), "e30_readouts": e30_readouts(data_dir, r30),
+           "e31": (r31 := e31(data_dir)), "e31_readouts": e31_readouts(data_dir, r31), "b3": b3(data_dir, r30),
+           "e31r": e31r(data_dir), "e31p": e31p(data_dir), "e32": e32(data_dir),
            "e22": e22(data_dir),
            "e14_registered": e14_registered(obs),
            "e14_fixed_effects": e14_fixed_effects(obs),

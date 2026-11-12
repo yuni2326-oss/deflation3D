@@ -1,0 +1,131 @@
+{
+  "tag": "e25_tbracket",
+  "reference": "p5_reference_e25_tbracket",
+  "geometry": {
+    "L": 1.0,
+    "b": 0.2,
+    "h": 0.1,
+    "E": 1.0,
+    "rho": 1.0,
+    "nu": 0.29,
+    "kind": "T",
+    "a": 0.25
+  },
+  "faces": "x0",
+  "level": [
+    80,
+    16,
+    8
+  ],
+  "check_level": [
+    40,
+    8,
+    4
+  ],
+  "start_vector": "ones",
+  "render_blocks": [
+    {
+      "lo": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "hi": [
+        0.8,
+        0.2,
+        0.1
+      ],
+      "n": [
+        33,
+        9,
+        3
+      ]
+    },
+    {
+      "lo": [
+        0.8,
+        0.0,
+        0.0
+      ],
+      "hi": [
+        1.0,
+        0.2,
+        0.1
+      ],
+      "n": [
+        9,
+        9,
+        3
+      ]
+    },
+    {
+      "lo": [
+        0.8,
+        -0.25,
+        0.0
+      ],
+      "hi": [
+        1.0,
+        0.0,
+        0.1
+      ],
+      "n": [
+        9,
+        11,
+        3
+      ]
+    },
+    {
+      "lo": [
+        0.8,
+        0.2,
+        0.0
+      ],
+      "hi": [
+        1.0,
+        0.45,
+        0.1
+      ],
+      "n": [
+        9,
+        11,
+        3
+      ]
+    }
+  ],
+  "modes": [
+    {
+      "mode": 1,
+      "lam_star": 0.0041051696120346795,
+      "lam_fem": 0.0041063093595406506,
+      "dominant": "z",
+      "character": "bending",
+      "self_mac_levels": 0.9999999952479016
+    },
+    {
+      "mode": 2,
+      "lam_star": 0.014574105134050004,
+      "lam_fem": 0.014578223680887802,
+      "dominant": "y",
+      "character": "lateral",
+      "self_mac_levels": 0.9999999959809766
+    },
+    {
+      "mode": 3,
+      "lam_star": 0.03488656961060239,
+      "lam_fem": 0.03489252176200753,
+      "dominant": "z",
+      "character": "torsion",
+      "self_mac_levels": 0.9999999932397721
+    },
+    {
+      "mode": 4,
+      "lam_star": 0.27320544631844845,
+      "lam_fem": 0.2733183985606912,
+      "dominant": "z",
+      "character": "bending",
+      "self_mac_levels": 0.9999999004898925
+    }
+  ],
+  "sign": "each mode normalised so its largest-magnitude component is positive"
+}

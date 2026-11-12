@@ -1,0 +1,2 @@
+arm,condition,stage_mode,n_seeds,iters,n_seeds_summarized,k,kappa_gram,kappa_gram_times_eps,dev_identity,max_offdiag,lam_min_normalized,qr_orth_defect,n_dropped,dtype,measure_dtype,span_finite_frac,eps_machine,rank_1e10,rank_1e12,rank_1e16,gram_solve_finite_frac
+p5_neural_3d[exact projection],mc,2,20,20000,20,1,1.0,2.220446049250313e-16,0.0,0.0,1.0,1.1102230246251565e-16,0,float64,float64,1.0,2.220446049250313e-16,1,1,1,1.0

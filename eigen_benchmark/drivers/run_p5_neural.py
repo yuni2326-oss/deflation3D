@@ -767,7 +767,9 @@ def grid_v2(outdir=None, tau: float | None = None, arms=None, width: int = 128,
             batch_diag: bool = False, ref_level=None,
             resample_every: int | None = None, ladder_chunk: int | None = None,
             stage_from: dict | None = None, checkpoint_every: int | None = None,
-            save_hist: bool = False) -> dict:
+            save_hist: bool = False, lr_milestones=None, fourier: dict | None = None,
+            solver: str = "rayleigh", boundary_points: int = 600,
+            n_modes: int | None = None, init_seed_offset: int = 0, traction_weight: float = 1.0) -> dict:
     """§5 본실험 — 훈련은 재표집 격자, 게이트·채점은 감사 격자.
 
     `pair_scoring`은 축퇴쌍이 있는 구조를 위한 군집 단위 정합이다(`match_clustered`). 끄면
@@ -785,7 +787,22 @@ def grid_v2(outdir=None, tau: float | None = None, arms=None, width: int = 128,
     E21h: `stage_from`(npz·tag·arm·cond·n_stored·width·depth·iters)을 주면 앞 `n_stored`개 모드를 그 실행이
     저장한 망으로 두고(`solve_p5_neural(stored=)`) 새 단계만 학습·기록한다 — 행·기록·곁가지·스팬 진단은 새
     단계뿐이고, 망 파라미터는 전 모드다. `checkpoint_every`는 새 단계의 중간 망을 `p5_params_<tag>_ckpt.npz`에,
-    `save_hist`는 새 단계의 감사 격자 Λ 이력을 `p5_hist_<tag>.npz`에 남긴다. 셋 다 기본값이면 커밋된 동작이다."""
+    `save_hist`는 새 단계의 감사 격자 Λ 이력을 `p5_hist_<tag>.npz`에 남긴다. 셋 다 기본값이면 커밋된 동작이다.
+
+    E23: `lr_milestones`는 학습률 감소 시점을 반복 수로 못 박고, `fourier`는 학습하는 단계의 망에 고정 Fourier 특징을
+    붙인다(`solve_p5_neural`). 둘 다 기본값이면 커밋된 동작이다.
+
+    E25: `n_modes`는 풀 모드 수다(기본 None = 6). 저장 망 시작(`stage_from`)과 함께 한 단계만 다시 풀 때 쓴다.
+
+    E27: `stage_from={"mixed": [단계별 출처 목록, …], "width", "depth", "iters"}`이면 저장 단계마다 시드를 출처(실행의
+    망 파일·모드·Fourier 여부·정규화 여부)에 나눠 담는다(`p5_exploit.load_mixed_stages`). `init_seed_offset`은 학습하는
+    단계의 초기화 난수에 더한다(재초기화 경로). 둘 다 기본값이면 커밋된 동작이다.
+
+    E28: `traction_weight`는 강형식 해석기의 자유면 견인력 항 가중이다(기본값 1이면 커밋된 손실).
+
+    E24: `solver="strong"`이면 변분형 대신 강형식 해석기(`p5_pinn.solve_p5_pinn`: 잔차 + 자유면 견인력 + 정규화 +
+    직교성 벌점, 학습되는 λ)로 푼다. arm은 `("penalty",)` 하나이고 대조군·저장 망 시작은 다루지 않는다. 채점·기록은 같은
+    규칙이고, 기록에 강형식 계측(학습된 λ, 잔차·견인력의 훈련/감사 값, 직교 결함)이 붙는다. 기본값이면 커밋된 동작이다."""
     import math
 
     import numpy as np
@@ -806,10 +823,14 @@ def grid_v2(outdir=None, tau: float | None = None, arms=None, width: int = 128,
     # 돌리려는 호출이 조용히 네 조건을 돈다(E12에서 실제로 그랬다). `None`만 기본값이다.
     arms = GRID_ARMS_A if arms is None else tuple(arms)
     # `iters`는 E2 예산 대조가 바꾸는 **유일한** 값이다(사전규정 E2). 기본값은 본실험.
-    n_seeds, n_modes, snap = GRID_SEEDS_A, GRID_MODES, 25
+    n_seeds, snap = GRID_SEEDS_A, 25
+    n_modes_given = n_modes is not None
+    n_modes = GRID_MODES if n_modes is None else int(n_modes)
     iters = GRID_ITERS if iters is None else int(iters)
     if quick:
-        n_seeds, n_modes, iters, width, depth, snap = 2, 2, 20, 16, 2, 2
+        n_seeds, iters, width, depth, snap = 2, 20, 16, 2, 2
+        # 명시한 모드 수는 quick에서도 둔다 — 단계 1만 푸는 실행(E28a)을 시험이 그대로 밟게 한다.
+        n_modes = n_modes if n_modes_given else 2
 
     ref = _reference(d, ref_name)
     lam1 = float(ref[1]["lam_star"])
@@ -835,13 +856,19 @@ def grid_v2(outdir=None, tau: float | None = None, arms=None, width: int = 128,
         if control:
             raise ValueError("stage_from은 재표집 조건만 다룬다(control=False)")
         import torch as _torch
-        from .p5_exploit import load_ensembles
-        stored_ens = load_ensembles(
-            stage_from["npz"], stage_from["arm"], stage_from["cond"],
-            n_modes=int(stage_from["n_stored"]), n_seeds=n_seeds, width=int(stage_from["width"]),
-            depth=int(stage_from["depth"]),
-            device=device or ("cuda" if _torch.cuda.is_available() else "cpu"))
-        first = int(stage_from["n_stored"]) + 1
+        _dev = device or ("cuda" if _torch.cuda.is_available() else "cpu")
+        if "mixed" in stage_from:
+            from .p5_exploit import load_mixed_stages
+            stored_ens = load_mixed_stages(stage_from["mixed"], n_seeds=n_seeds, width=int(stage_from["width"]),
+                                           depth=int(stage_from["depth"]), geometry=geometry, device=_dev)
+            first = len(stage_from["mixed"]) + 1
+        else:
+            from .p5_exploit import load_ensembles
+            stored_ens = load_ensembles(
+                stage_from["npz"], stage_from["arm"], stage_from["cond"],
+                n_modes=int(stage_from["n_stored"]), n_seeds=n_seeds, width=int(stage_from["width"]),
+                depth=int(stage_from["depth"]), device=_dev)
+            first = int(stage_from["n_stored"]) + 1
 
     part_rows, part_recs = [], []        # 곁가지 누적 — arm을 가로질러 산다
     ps_rows = []                         # 시드별 스팬 진단(별도 파일, 스키마 불변)
@@ -858,26 +885,49 @@ def grid_v2(outdir=None, tau: float | None = None, arms=None, width: int = 128,
                 for name, v in info["params"].items():
                     store[f"{arm}_{cond}_m{info['mode']}_it{info['it']}_{name}"] = v
                 np.savez_compressed(os.path.join(d, f"p5_params_{tag}_ckpt.npz"), **store)
-        out = p5n.solve_p5_neural(
-            n_modes=n_modes, n_seeds=n_seeds, iters=iters, width=width,
-            depth=depth, projection=arm, device=device,
-            audit_grid=audit, check_grid=check,
-            resample_every=resample, snapshot_every=snap, family_axes=family_axes,
-            geometry=geometry, bc=bc,
-            # 고정 조건의 훈련 격자. 기본값은 커밋된 동작(감사 격자 자체)이고,
-            # E12는 그것을 감사 격자보다 성긴 격자로 바꿔 held-out을 유지한다.
-            grid=((fixed_train_grid or audit) if resample is None
-                  else p5n.CERTIFIED_GRID),
-            on_mode_done=writer, heartbeat_every=HEARTBEAT_ITERS,
-            check_grids=check_grids, gram_offdiag=gram_offdiag,
-            per_seed_span=per_seed_span,
-            return_params=save_params, normalize_input=normalize_input,
-            mc_points=mc_points if resample else None,
-            storage=storage if resample else "raw",
-            batch_diag=batch_diag and resample is not None, ladder_chunk=ladder_chunk,
-            stored=stored_ens,
-            stored_iters=None if stage_from is None else int(stage_from["iters"]),
-            on_checkpoint=ckpt, checkpoint_every=checkpoint_every)
+        if solver == "strong":
+            if control or stage_from is not None or arm != "penalty":
+                raise ValueError("강형식은 penalty arm의 재표집 조건만 다룬다(control=False, stage_from=None)")
+        if solver != "strong" and float(traction_weight) != 1.0:
+            raise ValueError("traction_weight는 강형식 해석기에만 있다")
+        if solver == "strong":
+            from ..neural import p5_pinn
+            out = p5_pinn.solve_p5_pinn(
+                n_modes=n_modes, n_seeds=n_seeds, iters=iters, width=width, depth=depth,
+                device=device, audit_grid=audit, resample_every=resample, snapshot_every=snap,
+                family_axes=family_axes, geometry=geometry, bc=bc,
+                mc_points=mc_points, boundary_points=boundary_points,
+                on_mode_done=writer, heartbeat_every=HEARTBEAT_ITERS,
+                check_grids=check_grids if check_grids is not None else [check],
+                gram_offdiag=gram_offdiag, per_seed_span=per_seed_span,
+                return_params=save_params, normalize_input=normalize_input,
+                ladder_chunk=ladder_chunk, traction_weight=traction_weight)
+        elif solver != "rayleigh":
+            raise ValueError(f"solver는 'rayleigh' 또는 'strong'이어야 합니다: {solver!r}")
+        else:
+            out = p5n.solve_p5_neural(
+                n_modes=n_modes, n_seeds=n_seeds, iters=iters, width=width,
+                depth=depth, projection=arm, device=device,
+                audit_grid=audit, check_grid=check,
+                resample_every=resample, snapshot_every=snap, family_axes=family_axes,
+                geometry=geometry, bc=bc,
+                # 고정 조건의 훈련 격자. 기본값은 커밋된 동작(감사 격자 자체)이고,
+                # E12는 그것을 감사 격자보다 성긴 격자로 바꿔 held-out을 유지한다.
+                grid=((fixed_train_grid or audit) if resample is None
+                      else p5n.CERTIFIED_GRID),
+                on_mode_done=writer, heartbeat_every=HEARTBEAT_ITERS,
+                check_grids=check_grids, gram_offdiag=gram_offdiag,
+                per_seed_span=per_seed_span,
+                return_params=save_params, normalize_input=normalize_input,
+                mc_points=mc_points if resample else None,
+                storage=storage if resample else "raw",
+                batch_diag=batch_diag and resample is not None, ladder_chunk=ladder_chunk,
+                stored=stored_ens,
+                stored_iters=(None if stage_from is None else
+                          [int(v) for v in stage_from["iters"]]
+                          if isinstance(stage_from["iters"], (list, tuple)) else int(stage_from["iters"])),
+                on_checkpoint=ckpt, checkpoint_every=checkpoint_every,
+                lr_milestones=lr_milestones, fourier=fourier, init_seed_offset=init_seed_offset)
         w = out["w"]
         for m in range(first, n_modes + 1):
             target = ref[m]["lam_star"]
@@ -928,7 +978,12 @@ def grid_v2(outdir=None, tau: float | None = None, arms=None, width: int = 128,
                                 if pair_scoring else {}),
                              **({"storage": out["storage"],
                                  "batch_offdiag": float(out["batch_offdiag"][s, m - 1])}
-                                if out.get("batch_offdiag") is not None else {})})
+                                if out.get("batch_offdiag") is not None else {}),
+                             # E24 강형식 계측 — 변분형 기록에는 없다
+                             **({key: float(out[key][s, m - 1]) for key in
+                                 ("lam_param", "res_train", "res_audit", "bc_train", "bc_audit",
+                                  "orth_train", "orth_audit")}
+                                if out.get("lam_param") is not None else {})})
             lo, hi = mt.wilson(cnt["correct"], n_seeds)
             pm = out["projected_mass_fraction"][:, m - 1]
             dr = out["quadrature_drift"][:, m - 1]
@@ -963,7 +1018,8 @@ def grid_v2(outdir=None, tau: float | None = None, arms=None, width: int = 128,
                                 "stage_mode": m, "iters": iters, **row})
         # **arm이 끝날 때마다 저장한다**(v1 B5).
         manifest.write_csv(os.path.join(d, f"p5_neural_{tag}.csv"), rows)
-        manifest.write_csv(os.path.join(d, f"p5_span_diagnostics_{tag}.csv"), diag)
+        if diag:                         # 모드 1만 푸는 실행에는 앞 스팬이 없어 행이 없다(E28a 단계 1)
+            manifest.write_csv(os.path.join(d, f"p5_span_diagnostics_{tag}.csv"), diag)
         manifest.write_jsonl(os.path.join(d, f"p5_neural_{tag}_records.jsonl"), recs)
         if ps_rows:
             manifest.write_csv(os.path.join(d, f"p5_span_per_seed_{tag}.csv"), ps_rows)
@@ -1005,8 +1061,17 @@ def grid_v2(outdir=None, tau: float | None = None, arms=None, width: int = 128,
         "mc_points": mc_points, "mc_resample_every": mc_resample_every if mc_points else None,
         "storage": storage, "batch_diag": bool(batch_diag), "ladder_chunk": ladder_chunk,
         "stage_from": (None if stage_from is None else
+                       {**stage_from, "mixed": [[{**src, "npz": os.path.basename(src["npz"])} for src in st]
+                                                for st in stage_from["mixed"]]} if "mixed" in stage_from else
                        {**stage_from, "npz": os.path.basename(stage_from["npz"])}),
+        "init_seed_offset": int(init_seed_offset), "traction_weight": float(traction_weight),
         "checkpoint_every": checkpoint_every, "save_hist": bool(save_hist),
+        "lr_milestones": None if lr_milestones is None else [int(v) for v in lr_milestones],
+        "fourier": None if fourier is None else dict(fourier),
+        "solver": solver,
+        **({"boundary_points": int(boundary_points),
+            "strong_form": {k_: out[k_] for k_ in ("weights", "eigenvalue", "loss_term_names")}}
+           if solver == "strong" else {}),
         "fixed_train_grid": (None if fixed_train_grid is None
                              else list(fixed_train_grid)),
         "arms": list(arms), "control": bool(control), "n_modes": n_modes,
@@ -1506,6 +1571,1067 @@ def e21h_run(cond: str, outdir=None, device=None) -> dict:
     k["stage_from"] = {**k["stage_from"], "npz": npz}
     return grid_v2(outdir=d, device=device, tau=tau, **k)
 
+
+# ── E23 (사전규정 2026-10-17-p5-e23-prespecification.md) ──────────────────────────
+# E21h의 일정 조건은 단계를 4배로 늘리면서 학습률이 높은 구간도 4배로 늘렸다(사전규정 §5의 한계). lowtail은 감소
+# 시점을 원래 일정의 6,666·13,332회에 묶고 반복만 80,000회로 늘린다 — 첫 19,998회는 E21g-mc 모드 6 단계와 같은
+# 경로이고, 그 뒤는 0.16배 학습률로 이어 간다. fourier는 같은 20,000회 일정에서 새 단계의 입력에 고정 Fourier 특징을
+# 붙인다(스펙트럼 편향 대응, Wang 외 2021). 둘 다 E21g-mc의 저장된 모드 1–5에서 모드 6 단계만 다시 푼다.
+E23_TAGS = {"lowtail": "e21lb_s6_norm_x4lo", "fourier": "e21lb_s6_norm_ff"}
+E23_MILESTONES = (GRID_ITERS // 3, 2 * (GRID_ITERS // 3))       # 6,666, 13,332
+E23_FOURIER = {"features": 64, "sigma": 1.0, "seed": 2310}
+
+
+def e23_settings(cond: str) -> dict:
+    if cond not in E23_TAGS:
+        raise ValueError(f"E23 조건은 {sorted(E23_TAGS)} 중 하나여야 합니다: {cond!r}")
+    k = {**e21h_settings("sched_norm"), "tag": E23_TAGS[cond]}
+    if cond == "lowtail":
+        k["lr_milestones"] = E23_MILESTONES
+    else:
+        for name in ("iters", "checkpoint_every"):
+            k.pop(name)
+        k["fourier"] = dict(E23_FOURIER)
+    return k
+
+
+def e23_run(cond: str, outdir=None, device=None) -> dict:
+    """E23 조건 하나. τ는 E21의 것을 읽고, 앞 모드 1–5의 저장된 망(E21g-mc)이 없으면 거부한다."""
+    import json
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    p = os.path.join(d, f"manifest_p5_tau_{E21_TAU_TAG}.json")
+    if not os.path.exists(p):
+        raise FileNotFoundError(f"{p}가 없다 — E21 τ 보정이 먼저다")
+    tau = float(json.load(open(p, encoding="utf-8"))["tau"])
+    k = e23_settings(cond)
+    npz = os.path.join(d, os.path.basename(k["stage_from"]["npz"]))
+    if not os.path.exists(npz):
+        raise FileNotFoundError(f"{npz}가 없다 — 앞 모드의 저장된 망이 먼저다")
+    k["stage_from"] = {**k["stage_from"], "npz": npz}
+    return grid_v2(outdir=d, device=device, tau=tau, **k)
+
+# ── E24 (사전규정 2026-10-17-p5-e24-prespecification.md) ──────────────────────────
+# 강형식 물리정보 해석기(`p5_pinn`)를 변분형의 두 조건에 그대로 얹는다. 상자는 본실험 조건(가우스 격자족 250회 재추첨,
+# 원좌표, 감사 격자 30×15×12, E6 사다리, τ 5.0), L-브래킷은 E21g-mc 조건(균등 MC 1,269점 매 반복, 정규화 좌표, E21 감사
+# 격자·사다리, τ 10)이다. 같은 시드 0–19, 같은 일정·망이고 바뀌는 것은 목적함수와 deflation 방식뿐이다.
+E24_TAGS = {"box": "e24_pinn_box", "thick": "e24_pinn_thick", "lbracket": "e24_pinn_lb"}
+# 파일럿 규칙(사전규정 §2.3): 보정 시드에서 기준 상자의 모드 1을 찾지 못하면 상자 조건을 두꺼운 상자(E13-a와 같은 설정)로 바꾼다.
+E24_THICK = {"geometry": {"L": 1.0, "b": 0.2, "h": 0.10, "E": 1.0, "rho": 1.0, "nu": 0.29},
+             "ref_name": "p5_reference_e13a_thick"}
+E24_BOUNDARY_POINTS = 600
+E24_PILOT_SEED = 9001          # 보정 전용 시드 기저(τ 보정과 같은 뜻) — 본실험 seed 0과 서로소
+E24_PILOT_SEEDS = 4
+E24_PILOT_MODES = 2
+
+
+def e24_settings(structure: str) -> dict:
+    if structure not in E24_TAGS:
+        raise ValueError(f"E24 구조는 {sorted(E24_TAGS)} 중 하나여야 합니다: {structure!r}")
+    common = {"arms": ("penalty",), "control": False, "solver": "strong",
+              "boundary_points": E24_BOUNDARY_POINTS, "gram_offdiag": True, "per_seed_span": True,
+              "save_params": True, "save_hist": True, "tag": E24_TAGS[structure]}
+    if structure == "box":
+        return {**common, "check_grids": list(E6_LADDER)}
+    if structure == "thick":
+        return {**common, "check_grids": list(E6_LADDER), "geometry": dict(E24_THICK["geometry"]),
+                "ref_name": E24_THICK["ref_name"]}
+    return {**e21g_settings("mc"), **common}
+
+
+def _e24_tau_file(structure: str) -> str:
+    return _BASE_TAU if structure in ("box", "thick") else f"manifest_p5_tau_{E21_TAU_TAG}.json"
+
+
+def e24_run(structure: str, outdir=None, device=None) -> dict:
+    """E24 구조 하나. τ는 그 변분형 조건의 것을 읽고(보조 분류용), 없으면 거부한다."""
+    import json
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    p = os.path.join(d, _e24_tau_file(structure))
+    if not os.path.exists(p):
+        raise FileNotFoundError(f"{p}가 없다 — 그 구조의 τ 보정이 먼저다")
+    tau = float(json.load(open(p, encoding="utf-8"))["tau"])
+    return grid_v2(outdir=d, device=device, tau=tau, **e24_settings(structure))
+
+
+def e24_pilot(structure: str, outdir=None, device=None, quick: bool = False) -> dict:
+    """E24 파일럿 — 보정 시드 4개(기저 9001), 모드 1–2, 단계당 20,000회. **판정에 쓰지 않는다.** 강형식이 이 조건에서
+    모드 1을 찾는지(사전규정의 상자 구조 선택 규칙)와 계산 시간만 본다. 채점 규칙은 본실험과 같다(게이트 없는 정확)."""
+    import math
+
+    import numpy as np
+
+    from ..neural import p5_pinn
+    from .run_p5 import LADDER
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    launch = manifest.launch_provenance()
+    k = e24_settings(structure)
+    geometry = k.get("geometry")
+    audit = tuple(k.get("audit_grid", AUDIT_GRID))
+    n_seeds, n_modes, iters, width, depth = E24_PILOT_SEEDS, E24_PILOT_MODES, GRID_ITERS, 128, 5
+    level = k.get("ref_level")
+    if quick:
+        n_seeds, iters, width, depth = 2, 6, 8, 2
+        audit, level = (8, 5, 4), LADDER[0]
+    mc = k.get("mc_points")
+    out = p5_pinn.solve_p5_pinn(
+        n_modes=n_modes, n_seeds=n_seeds, iters=iters, seed=E24_PILOT_SEED, width=width, depth=depth,
+        device=device, geometry=geometry, audit_grid=audit,
+        resample_every=(k.get("mc_resample_every", 1) if mc else V2_RESAMPLE_EVERY),
+        mc_points=mc, family_axes=k.get("family_axes"), boundary_points=k["boundary_points"],
+        normalize_input=bool(k.get("normalize_input")), heartbeat_every=None if quick else HEARTBEAT_ITERS)
+    ref = _reference(d, k.get("ref_name", "p5_reference"))
+    shapes_ref = _reference_shapes(n_modes + 2, audit, geometry, k.get("bc", "clamped_x0"), level=level)
+    rows = []
+    for m in range(1, n_modes + 1):
+        for s in range(n_seeds):
+            lam = float(out["lam"][s, m - 1])
+            macs = [_mass_mac(out["shapes"][m - 1][s], R, out["w"]) for R in shapes_ref]
+            j = int(np.nanargmax(macs)) + 1
+            target = float(ref[m]["lam_star"])
+            e = abs(lam - target) / target if math.isfinite(lam) else float("nan")
+            rows.append({"structure": structure, "mode": m, "seed": s, "matched_mode": j,
+                         "mac": float(macs[j - 1]), "e_lam": e, "Lam": lam, "Lam_ref": target,
+                         "accurate": bool(j == m and macs[j - 1] >= 0.9 and e <= 0.05),
+                         **{key: float(out[key][s, m - 1]) for key in
+                            ("lam_param", "res_train", "res_audit", "bc_train", "bc_audit",
+                             "orth_train", "orth_audit")},
+                         "seconds": float(out["stage_seconds"][m - 1])})
+    manifest.write_csv(os.path.join(d, f"p5_pilot_e24_{structure}.csv"), rows)
+    manifest.write_json(os.path.join(d, f"manifest_p5_pilot_e24_{structure}.json"), manifest.build({
+        "driver": "run_p5_neural.e24_pilot", "structure": structure, "launch": launch, "quick": bool(quick),
+        "seed_base": E24_PILOT_SEED, "n_seeds": n_seeds, "n_modes": n_modes, "iters": iters,
+        "settings": {kk: (list(v) if isinstance(v, tuple) else v) for kk, v in k.items()
+                     if kk not in ("geometry",)},
+        "geometry": _geometry_record(geometry), "role": "pilot on calibration seeds; not used for judgment"}))
+    return {"rows": rows, "outdir": d}
+
+# ── E25 (사전규정 2026-10-17-p5-e25-prespecification.md) ──────────────────────────
+# T-브래킷 — 검증 프로토콜(원고 3.5절)이 정해진 뒤에 들인 구조에서 프로토콜을 전향적으로 시험한다. 원 설정(가우스 격자족
+# 250회 재추첨, 원좌표)의 대각·정확 arm이 "전", 프로토콜 arm(매 반복 균등 MC, 정확 사영, 정규화 좌표)이 "후"이고, 프로토콜
+# arm에서 단계가 건너뛰면 그 단계만 4배 일정으로 다시 푸는 처방(§2.4)을 정해 둔다. 격자족은 날개가 짧아 단위 길이당 13–17점
+# (12점은 인증 1.27 × 10⁻⁶로 불합격), 감사 격자는 그 1.5배 (26, 12, 12)다(제작해 네 장 1.35 × 10⁻⁷).
+E25_GEOMETRY = {"kind": "T", "L": 1.0, "b": 0.20, "h": 0.10, "a": 0.25, "E": 1.0, "rho": 1.0, "nu": 0.29}
+E25_REF = "p5_reference_e25_tbracket"
+E25_REF_LEVEL = (80, 16, 8)              # run_p5.L_LADDER[-1]
+E25_FAMILY_AXES = ((13, 14, 15, 16, 17), (6, 7, 8), (6, 7, 8))
+E25_AUDIT_GRID = (26, 12, 12)
+E25_CHECK_GRID = (35, 16, 16)
+E25_LADDER = ((35, 16, 16), (52, 24, 24), (70, 32, 32))
+E25_MC_POINTS = 1651                     # 격자족 45개의 평균 점수 1,650.6
+E25_TAGS = {"orig_diag": "e25tb_diag", "orig_exact": "e25tb_exact", "protocol": "e25tb_protocol"}
+E25_REMEDY_MIN_STAGE = 4                 # 처방은 단계 4–6에만(그 앞은 예산 밖, 사전규정 §2.4)
+
+
+def e25_settings(arm: str) -> dict:
+    if arm not in E25_TAGS:
+        raise ValueError(f"E25 arm은 {sorted(E25_TAGS)} 중 하나여야 합니다: {arm!r}")
+    base = {"control": False, "tag": E25_TAGS[arm], "geometry": dict(E25_GEOMETRY), "bc": "clamped_x0",
+            "ref_name": E25_REF, "ref_level": E25_REF_LEVEL, "audit_grid": E25_AUDIT_GRID,
+            "check_grid": E25_CHECK_GRID, "check_grids": list(E25_LADDER), "family_axes": E25_FAMILY_AXES,
+            "pair_scoring": True, "gram_offdiag": True, "per_seed_span": True, "save_params": True}
+    if arm == "orig_diag":
+        return {**base, "arms": ("diagonal",)}
+    if arm == "orig_exact":
+        return {**base, "arms": ("exact",)}
+    return {**base, "arms": ("exact",), "mc_points": E25_MC_POINTS, "mc_resample_every": 1,
+            "normalize_input": True, "save_hist": True}
+
+
+def e25_remedy_settings(k: int, step: int) -> dict:
+    """처방(사전규정 §2.4). step 1: 프로토콜 arm의 저장 모드 1–(k−1)에서 단계 k만 4배 일정으로 다시 푼다. step 2(k < 6):
+    처방한 단계까지의 망(모드 1–k)에서 단계 k+1–6을 원래 일정으로 이어 푼다 — 저장 단계마다 뽑던 표본 수만큼 난수를 넘긴다."""
+    if not E25_REMEDY_MIN_STAGE <= int(k) <= 6:
+        raise ValueError(f"처방은 단계 {E25_REMEDY_MIN_STAGE}–6에만 정해 두었다: k = {k}")
+    k = int(k)
+    p = {kk: v for kk, v in e25_settings("protocol").items()}
+    if step == 1:
+        return {**p, "tag": f"e25tb_remedy_k{k}", "n_modes": k, "iters": 4 * GRID_ITERS,
+                "checkpoint_every": 20_000,
+                "stage_from": {"npz": os.path.join(manifest.P5_OUTDIR, f"p5_params_{E25_TAGS['protocol']}.npz"),
+                               "tag": E25_TAGS["protocol"], "arm": "exact", "cond": "mc", "n_stored": k - 1,
+                               "width": 128, "depth": 5, "iters": GRID_ITERS}}
+    if step == 2:
+        if k == 6:
+            raise ValueError("k = 6이면 이어 풀 단계가 없다")
+        return {**p, "tag": f"e25tb_remedy_k{k}_rest",
+                "stage_from": {"npz": os.path.join(manifest.P5_OUTDIR, f"p5_params_e25tb_remedy_k{k}.npz"),
+                               "tag": f"e25tb_remedy_k{k}", "arm": "exact", "cond": "mc", "n_stored": k,
+                               "width": 128, "depth": 5, "iters": [GRID_ITERS] * (k - 1) + [4 * GRID_ITERS]}}
+    raise ValueError(f"step은 1 또는 2다: {step!r}")
+
+
+def _e25_tau(d) -> float:
+    import json
+    p = os.path.join(d, f"manifest_p5_tau_{E21_TAU_TAG}.json")
+    if not os.path.exists(p):
+        raise FileNotFoundError(f"{p}가 없다 — E25는 L-브래킷(E21)의 τ를 보조 분류에만 쓴다")
+    return float(json.load(open(p, encoding="utf-8"))["tau"])
+
+
+def e25_run(arm: str, outdir=None, device=None) -> dict:
+    """E25 arm 하나. 참조(`p5_reference_e25_tbracket.csv`)와 E21 τ 파일이 없으면 거부한다."""
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    if not os.path.exists(os.path.join(d, f"{E25_REF}.csv")):
+        raise FileNotFoundError(f"{E25_REF}.csv가 없다 — 참조 계산이 먼저다")
+    return grid_v2(outdir=d, device=device, tau=_e25_tau(d), **e25_settings(arm))
+
+
+def e25_remedy_run(k: int, step: int, outdir=None, device=None) -> dict:
+    """E25 처방 한 단계. 앞 단계의 저장 망 파일이 출력 폴더에 없으면 거부한다."""
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    kw = e25_remedy_settings(k, step)
+    npz = os.path.join(d, os.path.basename(kw["stage_from"]["npz"]))
+    if not os.path.exists(npz):
+        raise FileNotFoundError(f"{npz}가 없다 — 처방의 앞 단계가 먼저다")
+    kw["stage_from"] = {**kw["stage_from"], "npz": npz}
+    return grid_v2(outdir=d, device=device, tau=_e25_tau(d), **kw)
+
+
+def e25_reference(outdir=None) -> dict:
+    """E25 참조 — L-브래킷과 같은 사다리와 규칙(`run_p5.structure_reference`), 형상 인증은 감사 격자에서."""
+    from . import run_p5
+    return run_p5.structure_reference("e25_tbracket", {k: v for k, v in E25_GEOMETRY.items()},
+                                      ladder=run_p5.L_LADDER, cert_grid=E25_AUDIT_GRID, outdir=outdir)
+
+# ── E26 (사전규정 2026-10-18-p5-e26-prespecification.md) ──────────────────────────
+# r2.0-interim 검토(2026-10-18)의 A1·A3. (a) 프로토콜 전/후를 프로토콜을 돌리지 않았던 네 구조로 넓힌다 — 원 설정과 같은
+# 설정에 훈련 구적만 매 반복 균등 MC(격자족 평균 점수)로 바꾸고 정확 사영·원좌표를 둔다(기준 상자의 E15b와 같은 조작).
+# (b) L-브래킷의 프로토콜 경로를 정규화 없이 세우기 위해, 원좌표 MC 실행(E21d)의 저장 모드 1–5에서 모드 6 단계를 고정
+# Fourier 특징(E23과 같은 설정)으로 다시 푼다. (c) 재풀이 일관성 검사의 음성 대조 — 모드 6이 20/20 정확이었던 기준 구조의
+# 원좌표 MC 실행(E15-b)에서 같은 재풀이를 한다(정답 단계에서 Λ가 허용오차보다 내려가지 않아야 검사가 쓸모 있다).
+# (d) 프로토콜 경로를 원좌표로 바꾼 뒤의 전향 시험 — T-브래킷의 E25 프로토콜 arm(정규화)과 같고 정규화만 뺀다(같은 시드).
+E26_TAGS = {"thick": "e26_thick_mc", "clamped2": "e26_cc_mc", "near": "e26_near_mc", "bilayer": "e26_bi_mc",
+            "fourier_raw": "e21lb_s6_raw_ff", "fourier_base": "e15b_s6_raw_ff", "tbracket_raw": "e26_tb_raw_mc"}
+E26_MC_POINTS = {"thick": 1134, "clamped2": 1134, "near": 1152, "bilayer": 1134}   # 각 격자족의 평균 점수
+E26_TAU = {"thick": _BASE_TAU, "clamped2": _BASE_TAU, "near": "manifest_p5_tau_e16_square.json",
+           "bilayer": "manifest_p5_tau_e22_bilayer.json", "fourier_raw": "manifest_p5_tau_e21_lbracket.json",
+           "fourier_base": _BASE_TAU, "tbracket_raw": "manifest_p5_tau_e21_lbracket.json"}
+
+
+def e26_settings(cond: str) -> dict:
+    if cond not in E26_TAGS:
+        raise ValueError(f"E26 조건은 {sorted(E26_TAGS)} 중 하나여야 합니다: {cond!r}")
+    if cond == "fourier_raw":
+        k = {**e21h_settings("sched_raw"), "tag": E26_TAGS[cond], "fourier": dict(E23_FOURIER)}
+        for name in ("iters", "checkpoint_every"):
+            k.pop(name)
+        return k
+    if cond == "tbracket_raw":
+        k = {**e25_settings("protocol"), "tag": E26_TAGS[cond]}
+        k.pop("normalize_input")
+        return k
+    if cond == "fourier_base":
+        return {"arms": ("exact",), "control": False, "tag": E26_TAGS[cond], "mc_points": E17_MC_POINTS,
+                "mc_resample_every": 1, "check_grids": list(E6_LADDER), "gram_offdiag": True, "per_seed_span": True,
+                "save_params": True, "save_hist": True, "fourier": dict(E23_FOURIER),
+                "stage_from": {"npz": os.path.join(manifest.P5_OUTDIR, "p5_params_e15b.npz"), "tag": "e15b",
+                               "arm": "exact", "cond": "mc", "n_stored": 5, "width": 128, "depth": 5,
+                               "iters": GRID_ITERS}}
+    mc = {"mc_points": E26_MC_POINTS[cond], "mc_resample_every": 1, "arms": ("exact",), "control": False,
+          "tag": E26_TAGS[cond], "gram_offdiag": True, "per_seed_span": True, "save_params": True}
+    if cond == "thick":
+        return {**mc, **{k_: (dict(v) if isinstance(v, dict) else v) for k_, v in E24_THICK.items()},
+                "check_grids": list(E6_LADDER)}
+    if cond == "clamped2":
+        return {**mc, "bc": "two_face", "ref_name": "p5_reference_e13b_clamped2", "check_grids": list(E6_LADDER)}
+    base = (e16_settings("exact") if cond == "near" else e22_settings("exact"))
+    if cond == "near":
+        base = {**base, "geometry": dict(E18_GEOMETRY), "ref_name": E18_REF}
+    return {**base, **mc}
+
+
+def e26_run(cond: str, outdir=None, device=None) -> dict:
+    """E26 조건 하나. τ는 그 구조의 보정 파일에서 읽고(보조 분류용), fourier_raw는 E21d의 저장 망이 있어야 한다."""
+    import json
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    p = os.path.join(d, E26_TAU[cond])
+    if not os.path.exists(p):
+        raise FileNotFoundError(f"{p}가 없다 — 그 구조의 τ 보정이 먼저다")
+    tau = float(json.load(open(p, encoding="utf-8"))["tau"])
+    k = e26_settings(cond)
+    if cond == "tbracket_raw" and not os.path.exists(os.path.join(d, f"{E25_REF}.csv")):
+        raise FileNotFoundError(f"{E25_REF}.csv가 없다 — T-브래킷 참조가 먼저다")
+    if "stage_from" in k:
+        npz = os.path.join(d, os.path.basename(k["stage_from"]["npz"]))
+        if not os.path.exists(npz):
+            raise FileNotFoundError(f"{npz}가 없다 — 앞 모드의 저장된 망이 먼저다")
+        k["stage_from"] = {**k["stage_from"], "npz": npz}
+    return grid_v2(outdir=d, device=device, tau=tau, **k)
+
+# ── E26e (사전규정 2026-10-22-p5-e26e-prespecification.md) ───────────────────────────
+# 프로토콜의 최적화 단계(재풀이 일관성 검사)를 E26b 첫 통과에 적용한다. 첫 통과에서 5/20 이상이 더 높은 모드에 자리 잡은
+# 단계 k마다, 그 실행의 저장 모드 1–(k−1)에서 단계 k만 고정 Fourier 특징(E23과 같은 B)으로 다시 푼다(n_modes = k, 원래 일정).
+# 이어지는 단계는 풀지 않는다 — 판독은 그 단계의 재풀이 검사(Λ 감소 > 0.05)와 정확의 전후다.
+# 어느 단계를 다시 풀지는 `p5_stats.e26e_rule_stages`가 첫 통과 기록에서 정한다(5/20 이상이 더 높은 모드).
+
+
+def e26e_settings(cond: str, k: int) -> dict:
+    if cond not in ("thick", "clamped2", "near", "bilayer"):
+        raise ValueError(f"E26e 구조는 E26b의 넷 중 하나여야 합니다: {cond!r}")
+    k = int(k)
+    if not 2 <= k <= 6:
+        raise ValueError(f"재풀이 단계는 2–6이다: k = {k}")
+    base = e26_settings(cond)
+    return {**base, "tag": f"{base['tag']}_s{k}_ff", "n_modes": k, "fourier": dict(E23_FOURIER), "save_hist": True,
+            "stage_from": {"npz": os.path.join(manifest.P5_OUTDIR, f"p5_params_{base['tag']}.npz"), "tag": base["tag"],
+                           "arm": "exact", "cond": "mc", "n_stored": k - 1, "width": 128, "depth": 5,
+                           "iters": GRID_ITERS}}
+
+
+def e26e_run(cond: str, k: int, outdir=None, device=None) -> dict:
+    """E26e 재풀이 하나. τ는 그 구조의 것을 읽고, 첫 통과의 저장 망이 없으면 거부한다."""
+    import json
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    p = os.path.join(d, E26_TAU[cond])
+    if not os.path.exists(p):
+        raise FileNotFoundError(f"{p}가 없다 — 그 구조의 τ 보정이 먼저다")
+    tau = float(json.load(open(p, encoding="utf-8"))["tau"])
+    k_ = e26e_settings(cond, k)
+    npz = os.path.join(d, os.path.basename(k_["stage_from"]["npz"]))
+    if not os.path.exists(npz):
+        raise FileNotFoundError(f"{npz}가 없다 — 첫 통과의 저장된 망이 먼저다")
+    k_["stage_from"] = {**k_["stage_from"], "npz": npz}
+    return grid_v2(outdir=d, device=device, tau=tau, **k_)
+
+# ── E27 (사전규정 2026-10-23-p5-e27-prespecification.md) ───────────────────────────
+# 검토 r2(2026-10-23) §3.1·§3.2. (a) 양단 고정 상자에서 프로토콜을 끝까지 전파한다. 단계 1은 첫 통과(E26b), 단계 2는 첫
+# 통과와 Fourier 재풀이(E26e) 가운데 시드마다 고른 것이다. 단계 3–6은 고른 앞 단계들에서 네 경로로 푼다 — 원 설정(first),
+# Fourier 입력(ff), 고율 구간을 그대로 두고 저율 구간을 늘린 80,000회 일정(long, E23의 lowtail과 같은 감소 시점), 정규화
+# 좌표(norm). 시드마다 사다리가 안정한(꼬리 폭 ≤ 10⁻³) 후보 가운데 감사 Λ가 가장 낮은 것을 고르고(`p5_stats.e27_select_stage`,
+# 참조를 읽지 않는다), 고른 망이 다음 단계의 저장 단계가 된다(`p5_neural.MixedStoredStage`). 단계 3에는 재초기화(reinit)를
+# 보조 경로로 더한다 — 고르는 데 쓰지 않는다. 표본 순서는 E26e와 같이 저장 단계마다 20,000회분 난수를 넘겨, 단계 k의 모든
+# 경로가 첫 통과의 단계 k와 같은 표본을 본다. (b) 정사각 단면의 프로토콜 첫 통과(E26b와 같은 조작, 군집 채점).
+E27_PATHS = ("first", "ff", "long", "norm")
+E27_AUX_PATHS = {3: ("reinit",)}
+E27_REINIT_OFFSET = 500
+E27_CC_BASE = "e26_cc_mc"
+E27_SELECTION = "p5_e27_cc_selection.json"
+E27_SQ_TAG = "e27_sq_mc"
+E27_SQ_MC_POINTS = 1152                  # 정사각 격자족(16–20, 7–9, 7–9)의 평균 점수
+
+
+def e27_tag(k: int, path: str) -> str:
+    return f"e27_cc_s{int(k)}_{path}"
+
+
+def e27_candidates(k: int) -> dict:
+    """단계 k에서 고를 후보 — 경로 이름 → 실행 태그(순서가 동률을 깬다)."""
+    k = int(k)
+    if k == 1:
+        return {"first": E27_CC_BASE}
+    if k == 2:
+        return {"first": E27_CC_BASE, "ff": f"{E27_CC_BASE}_s2_ff"}
+    return {p_: e27_tag(k, p_) for p_ in E27_PATHS}
+
+
+def e27_path_spec(path: str) -> dict:
+    """저장 단계로 되살릴 때의 망 구조와 입력 축척."""
+    return {"fourier": dict(E23_FOURIER) if path == "ff" else None, "normalize": path == "norm"}
+
+
+def e27_stage_sources(selection: dict, j: int, data_dir: str | None = None, candidates=None) -> list:
+    """고른 단계 j의 출처 목록 — 경로마다 그 실행의 망 파일과 시드들. `candidates`는 단계 → {경로: 태그} 함수(기본 E27)."""
+    d = manifest.P5_OUTDIR if data_dir is None else data_dir
+    chosen = selection["stages"][str(int(j))]["choice"]
+    cands = (e27_candidates if candidates is None else candidates)(j)
+    groups = {}
+    for s_, p_ in chosen.items():
+        if p_ not in cands:
+            raise ValueError(f"단계 {j}의 선택 {p_!r}는 후보가 아니다")
+        groups.setdefault(p_, []).append(int(s_))
+    return [{"npz": os.path.join(d, f"p5_params_{cands[p_]}.npz"), "arm": "exact", "cond": "mc", "mode": int(j),
+             **e27_path_spec(p_), "seeds": sorted(groups[p_]), "path": p_}
+            for p_ in cands if p_ in groups]
+
+
+def e27_settings(k: int, path: str, selection: dict, data_dir: str | None = None) -> dict:
+    k = int(k)
+    if not 3 <= k <= 6:
+        raise ValueError(f"E27 전파 단계는 3–6이다: k = {k}")
+    if path not in E27_PATHS + E27_AUX_PATHS.get(k, ()):
+        raise ValueError(f"단계 {k}의 경로는 {E27_PATHS + E27_AUX_PATHS.get(k, ())} 중 하나다: {path!r}")
+    missing = [j for j in range(1, k) if str(j) not in selection.get("stages", {})]
+    if missing:
+        raise ValueError(f"앞 단계 {missing}의 선택이 없다 — 그 단계의 경로들이 먼저다")
+    base = e26_settings("clamped2")
+    kw = {**base, "tag": e27_tag(k, path), "n_modes": k, "save_hist": True,
+          "stage_from": {"mixed": [e27_stage_sources(selection, j, data_dir) for j in range(1, k)],
+                         "width": 128, "depth": 5, "iters": GRID_ITERS}}
+    if path == "ff":
+        kw["fourier"] = dict(E23_FOURIER)
+    elif path == "long":
+        kw.update({"iters": 4 * GRID_ITERS, "lr_milestones": E23_MILESTONES})
+    elif path == "norm":
+        kw["normalize_input"] = True
+    elif path == "reinit":
+        kw["init_seed_offset"] = E27_REINIT_OFFSET
+    return kw
+
+
+def _e27_selection(d: str) -> dict:
+    import json
+    p = os.path.join(d, E27_SELECTION)
+    if not os.path.exists(p):
+        raise FileNotFoundError(f"{p}가 없다 — `e27_select_run`으로 앞 단계를 먼저 고른다")
+    return json.load(open(p, encoding="utf-8"))
+
+
+def e27_select_run(k: int, outdir=None) -> dict:
+    """단계 k의 후보 기록에서 시드마다 고르고 선택 파일에 더한다(이미 있으면 같은지 확인만 한다)."""
+    import json
+    from . import p5_stats
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    k = int(k)
+    recs = {p_: p5_stats.load(d, t) for p_, t in e27_candidates(k).items()}
+    choice = p5_stats.e27_select_stage(recs, k)
+    p = os.path.join(d, E27_SELECTION)
+    sel = json.load(open(p, encoding="utf-8")) if os.path.exists(p) else {"stages": {}}
+    entry = {"choice": {str(s_): v for s_, v in sorted(choice.items())},
+             "candidates": e27_candidates(k), "rule": p5_stats.E27_RULE}
+    old = sel["stages"].get(str(k))
+    if old is not None:
+        if old["choice"] != entry["choice"]:
+            raise ValueError(f"단계 {k}의 선택이 이미 있고 다르다 — 덮어쓰지 않는다")
+        return sel
+    sel["stages"][str(k)] = entry
+    manifest.write_json(p, sel)
+    manifest.write_json(os.path.join(d, "manifest_" + E27_SELECTION), manifest.build({
+        "driver": "run_p5_neural.e27_select_run", "stage": k, "reads": sorted(e27_candidates(k).values()),
+        "rule": p5_stats.E27_RULE, "prespecification": "docs/paper4-p5/2026-10-23-p5-e27-prespecification.md"}))
+    return sel
+
+
+def e27_run(k: int, path: str, outdir=None, device=None) -> dict:
+    """E27 전파의 단계 k를 경로 하나로. τ는 기준 구조의 것(보조 분류), 앞 단계의 선택과 망 파일이 없으면 거부한다."""
+    import json
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    p = os.path.join(d, E26_TAU["clamped2"])
+    if not os.path.exists(p):
+        raise FileNotFoundError(f"{p}가 없다 — τ 보정이 먼저다")
+    tau = float(json.load(open(p, encoding="utf-8"))["tau"])
+    kw = e27_settings(k, path, _e27_selection(d), data_dir=d)
+    for st in kw["stage_from"]["mixed"]:
+        for src in st:
+            if not os.path.exists(src["npz"]):
+                raise FileNotFoundError(f"{src['npz']}가 없다 — 그 경로의 실행이 먼저다")
+    return grid_v2(outdir=d, device=device, tau=tau, **kw)
+
+
+def e27_square_settings() -> dict:
+    """정사각 단면의 프로토콜 첫 통과 — E16 정확 arm의 설정에서 훈련 구적만 매 반복 균등 MC(격자족 평균 점수)로."""
+    return {**e16_settings("exact"), "tag": E27_SQ_TAG, "mc_points": E27_SQ_MC_POINTS, "mc_resample_every": 1,
+            "arms": ("exact",), "control": False}
+
+
+def e27_square_run(outdir=None, device=None) -> dict:
+    import json
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    p = os.path.join(d, f"manifest_p5_tau_{E16_TAU_TAG}.json")
+    if not os.path.exists(p):
+        raise FileNotFoundError(f"{p}가 없다 — 정사각 단면의 τ 보정이 먼저다")
+    tau = float(json.load(open(p, encoding="utf-8"))["tau"])
+    return grid_v2(outdir=d, device=device, tau=tau, **e27_square_settings())
+
+# ── E28 (사전규정 2026-10-23-p5-e28-prespecification.md) ───────────────────────────
+# 종합 검토(2026-10-23)와 그 응답의 세 요건. (a) 양단 고정 상자에서 참조를 실행 중 전혀 읽지 않는 end-to-end 프로토콜 — 단계
+# 1부터 6까지 단계마다 네 경로(first·ff·long·norm)로 풀고 사다리가 안정한 후보 가운데 감사 Λ가 가장 낮은 해를 시드마다 골라
+# 다음 단계로 넘긴다(E27a를 자료 전에 대체). 단계 1의 first는 첫 통과(E26b)의 단계 1과 같은 계산이라 그대로 쓴다. 단계 2·3에는
+# 같은 예산 비교를 위해 재초기화 4회(reinit1–4, 초기화 난수 +500·r)를 보조로 돈다(고르는 데 쓰지 않는다). (b) L-브래킷 단계
+# 6(E21d 저장 모드, 원좌표)에서 재초기화 4회 — "다시 시작해 최저 Λ를 고른다"는 단순 대안을 4배 일정과 같은 예산으로 비교한다.
+# (c) 근축퇴 단면에서 단계 5의 선택(첫 통과 vs Fourier 재풀이)을 단계 6으로 전파한다(first·ff). (d) T-브래킷 원좌표 첫 통과
+# (E26d, 120/120)의 단계 1–6을 Fourier로 다시 푼다 — 정답 단계에서 거짓 양성을 보는 음성 대조. (e) 두꺼운 상자의 강형식에서
+# 자유면 견인력 가중을 10으로 — 원인(표면 일) → 처방 → 검증.
+E28_PATHS = ("first", "ff", "long", "norm")
+E28_REINIT = {2: (1, 2, 3, 4), 3: (1, 2, 3, 4)}
+E28_REINIT_OFFSET = 500
+E28_SELECTION = "p5_e28_cc_selection.json"
+E28_NEAR_SELECTION = "p5_e28_nr_selection.json"
+E28_LB_REINIT = (1, 2, 3, 4)
+E28_TRACTION_WEIGHT = 10.0
+
+
+def e28_tag(k: int, path: str) -> str:
+    return f"e28_cc_s{int(k)}_{path}"
+
+
+def e28_candidates(k: int) -> dict:
+    """E28a 단계 k의 후보(경로 → 태그, 순서가 동률을 깬다). 단계 1의 first는 첫 통과(E26b)다."""
+    k = int(k)
+    return {p_: (E27_CC_BASE if (k == 1 and p_ == "first") else e28_tag(k, p_)) for p_ in E28_PATHS}
+
+
+def e28_aux_paths(k: int) -> tuple:
+    return tuple(f"reinit{r}" for r in E28_REINIT.get(int(k), ()))
+
+
+def _apply_path(kw: dict, path: str) -> dict:
+    """경로의 차이: Fourier 입력, 80,000회 저율 연장 일정, 정규화 좌표, 재초기화(+500·r)."""
+    if path == "ff":
+        kw["fourier"] = dict(E23_FOURIER)
+    elif path == "long":
+        kw.update({"iters": 4 * GRID_ITERS, "lr_milestones": E23_MILESTONES})
+    elif path == "norm":
+        kw["normalize_input"] = True
+    elif path.startswith("reinit"):
+        kw["init_seed_offset"] = E28_REINIT_OFFSET * int(path[len("reinit"):])
+    elif path != "first":
+        raise ValueError(f"모르는 경로: {path!r}")
+    return kw
+
+
+def e28_settings(k: int, path: str, selection: dict, data_dir: str | None = None) -> dict:
+    k = int(k)
+    if not 1 <= k <= 6:
+        raise ValueError(f"E28a 단계는 1–6이다: k = {k}")
+    allowed = tuple(p_ for p_ in E28_PATHS if not (k == 1 and p_ == "first")) + e28_aux_paths(k)
+    if path not in allowed:
+        raise ValueError(f"단계 {k}의 경로는 {allowed} 중 하나다: {path!r}")
+    missing = [j for j in range(1, k) if str(j) not in selection.get("stages", {})]
+    if missing:
+        raise ValueError(f"앞 단계 {missing}의 선택이 없다 — 그 단계의 경로들이 먼저다")
+    kw = {**e26_settings("clamped2"), "tag": e28_tag(k, path), "n_modes": k, "save_hist": True}
+    if k >= 2:
+        kw["stage_from"] = {"mixed": [e27_stage_sources(selection, j, data_dir, candidates=e28_candidates)
+                                      for j in range(1, k)],
+                            "width": 128, "depth": 5, "iters": GRID_ITERS}
+    return _apply_path(kw, path)
+
+
+def _select_into(path_json: str, k: int, candidates, d: str, prespec: str) -> dict:
+    """단계 k의 후보 기록에서 시드마다 고르고 선택 파일에 더한다(이미 있으면 같은지 확인만 한다)."""
+    import json
+    from . import p5_stats
+    recs = {p_: p5_stats.load(d, t) for p_, t in candidates(k).items()}
+    choice = p5_stats.e27_select_stage(recs, k)
+    p = os.path.join(d, path_json)
+    sel = json.load(open(p, encoding="utf-8")) if os.path.exists(p) else {"stages": {}}
+    entry = {"choice": {str(s_): v for s_, v in sorted(choice.items())}, "candidates": candidates(k),
+             "rule": p5_stats.E27_RULE}
+    old = sel["stages"].get(str(k))
+    if old is not None:
+        if old["choice"] != entry["choice"]:
+            raise ValueError(f"단계 {k}의 선택이 이미 있고 다르다 — 덮어쓰지 않는다")
+        return sel
+    sel["stages"][str(k)] = entry
+    manifest.write_json(p, sel)
+    manifest.write_json(os.path.join(d, "manifest_" + path_json), manifest.build({
+        "driver": "run_p5_neural._select_into", "stage": int(k), "reads": sorted(candidates(k).values()),
+        "rule": p5_stats.E27_RULE, "prespecification": prespec}))
+    return sel
+
+
+def e28_select_run(k: int, outdir=None) -> dict:
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    return _select_into(E28_SELECTION, int(k), e28_candidates, d,
+                        "docs/paper4-p5/2026-10-23-p5-e28-prespecification.md")
+
+
+def _read_selection(d: str, name: str) -> dict:
+    import json
+    p = os.path.join(d, name)
+    if not os.path.exists(p):
+        raise FileNotFoundError(f"{p}가 없다 — 앞 단계를 먼저 고른다")
+    return json.load(open(p, encoding="utf-8"))
+
+
+def _check_sources(kw: dict) -> dict:
+    for st in kw.get("stage_from", {}).get("mixed", []):
+        for src in st:
+            if not os.path.exists(src["npz"]):
+                raise FileNotFoundError(f"{src['npz']}가 없다 — 그 경로의 실행이 먼저다")
+    return kw
+
+
+def _tau_of(d: str, name: str) -> float:
+    import json
+    p = os.path.join(d, name)
+    if not os.path.exists(p):
+        raise FileNotFoundError(f"{p}가 없다 — τ 보정이 먼저다")
+    return float(json.load(open(p, encoding="utf-8"))["tau"])
+
+
+def e28_run(k: int, path: str, outdir=None, device=None) -> dict:
+    """E28a 단계 k를 경로 하나로. 단계 2 이상은 앞 단계의 선택과 망 파일이 있어야 한다."""
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    tau = _tau_of(d, E26_TAU["clamped2"])
+    sel = _read_selection(d, E28_SELECTION) if int(k) >= 2 else {"stages": {}}
+    return grid_v2(outdir=d, device=device, tau=tau, **_check_sources(e28_settings(k, path, sel, data_dir=d)))
+
+
+def e28_lb_settings(r: int) -> dict:
+    """E28b — L-브래킷 단계 6 재초기화 r(1–4): E21d의 저장 모드 1–5에서 원래 일정·원좌표로, 초기화 난수 +500·r."""
+    r = int(r)
+    if r not in E28_LB_REINIT:
+        raise ValueError(f"재초기화 번호는 {E28_LB_REINIT} 중 하나다: {r}")
+    k = {**e21h_settings("sched_raw"), "tag": f"e28_lb_s6_reinit{r}"}
+    for name in ("iters", "checkpoint_every"):
+        k.pop(name)
+    return _apply_path(k, f"reinit{r}")
+
+
+def e28_lb_run(r: int, outdir=None, device=None) -> dict:
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    tau = _tau_of(d, f"manifest_p5_tau_{E21_TAU_TAG}.json")
+    k = e28_lb_settings(r)
+    npz = os.path.join(d, os.path.basename(k["stage_from"]["npz"]))
+    if not os.path.exists(npz):
+        raise FileNotFoundError(f"{npz}가 없다 — E21d의 저장된 망이 먼저다")
+    k["stage_from"] = {**k["stage_from"], "npz": npz}
+    return grid_v2(outdir=d, device=device, tau=tau, **k)
+
+
+def e28_near_candidates(k: int) -> dict:
+    """E28c — 근축퇴 단면. 단계 1–4는 첫 통과, 단계 5는 첫 통과와 Fourier 재풀이(E26e), 단계 6은 전파한 first·ff."""
+    k = int(k)
+    if k <= 4:
+        return {"first": E26_TAGS["near"]}
+    if k == 5:
+        return {"first": E26_TAGS["near"], "ff": f"{E26_TAGS['near']}_s5_ff"}
+    return {"first": "e28_nr_s6_first", "ff": "e28_nr_s6_ff"}
+
+
+def e28_near_settings(path: str, selection: dict, data_dir: str | None = None) -> dict:
+    if path not in ("first", "ff"):
+        raise ValueError(f"E28c 경로는 first·ff다: {path!r}")
+    missing = [j for j in range(1, 6) if str(j) not in selection.get("stages", {})]
+    if missing:
+        raise ValueError(f"앞 단계 {missing}의 선택이 없다")
+    kw = {**e26_settings("near"), "tag": f"e28_nr_s6_{path}", "n_modes": 6, "save_hist": True,
+          "stage_from": {"mixed": [e27_stage_sources(selection, j, data_dir, candidates=e28_near_candidates)
+                                   for j in range(1, 6)], "width": 128, "depth": 5, "iters": GRID_ITERS}}
+    return _apply_path(kw, path)
+
+
+def e28_near_select_run(k: int, outdir=None) -> dict:
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    return _select_into(E28_NEAR_SELECTION, int(k), e28_near_candidates, d,
+                        "docs/paper4-p5/2026-10-23-p5-e28-prespecification.md")
+
+
+def e28_near_run(path: str, outdir=None, device=None) -> dict:
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    tau = _tau_of(d, E26_TAU["near"])
+    sel = _read_selection(d, E28_NEAR_SELECTION)
+    return grid_v2(outdir=d, device=device, tau=tau, **_check_sources(e28_near_settings(path, sel, data_dir=d)))
+
+
+def e28_tb_settings(k: int) -> dict:
+    """E28d — T-브래킷 원좌표 첫 통과(E26d)의 단계 k를 같은 저장 모드에서 Fourier로 다시 푼다(단계 1은 저장 모드 없음)."""
+    k = int(k)
+    if not 1 <= k <= 6:
+        raise ValueError(f"단계는 1–6이다: k = {k}")
+    base = e26_settings("tbracket_raw")
+    kw = {**base, "tag": f"e28_tb_s{k}_ff", "n_modes": k, "save_hist": True, "fourier": dict(E23_FOURIER)}
+    if k >= 2:
+        kw["stage_from"] = {"npz": os.path.join(manifest.P5_OUTDIR, f"p5_params_{base['tag']}.npz"),
+                            "tag": base["tag"], "arm": "exact", "cond": "mc", "n_stored": k - 1,
+                            "width": 128, "depth": 5, "iters": GRID_ITERS}
+    return kw
+
+
+def e28_tb_run(k: int, outdir=None, device=None) -> dict:
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    tau = _tau_of(d, E26_TAU["tbracket_raw"])
+    if not os.path.exists(os.path.join(d, f"{E25_REF}.csv")):
+        raise FileNotFoundError(f"{E25_REF}.csv가 없다 — T-브래킷 참조가 먼저다")
+    kw = e28_tb_settings(k)
+    if "stage_from" in kw:
+        npz = os.path.join(d, os.path.basename(kw["stage_from"]["npz"]))
+        if not os.path.exists(npz):
+            raise FileNotFoundError(f"{npz}가 없다 — E26d의 저장된 망이 먼저다")
+        kw["stage_from"] = {**kw["stage_from"], "npz": npz}
+    return grid_v2(outdir=d, device=device, tau=tau, **kw)
+
+
+def e28_pinn_settings() -> dict:
+    """E28e — 두꺼운 상자의 강형식(E24 thick과 같은 설정)에서 자유면 견인력 가중만 10으로."""
+    return {**e24_settings("thick"), "tag": "e28_pinn_thick_w10", "traction_weight": E28_TRACTION_WEIGHT}
+
+
+def e28_pinn_run(outdir=None, device=None) -> dict:
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    tau = _tau_of(d, _e24_tau_file("thick"))
+    return grid_v2(outdir=d, device=device, tau=tau, **e28_pinn_settings())
+
+# ── E29 (사전규정 2026-10-30-p5-e29-prespecification.md) ───────────────────────────
+# CMAME 요건(2026-10-30) §2.2 "한 단계 더". 순서 검사는 뒤 단계가 건너뛴 모드를 찾아야 울리므로 마지막 단계(6)를 볼 수
+# 없었다. 첫 통과가 저장한 모드 1–6에서 단계 7만 그 첫 통과의 설정으로 푼다(n_modes = 7, 원래 20,000회 일정, 저장 단계가
+# 뽑았을 표본만큼 난수를 넘김 — 7모드 첫 통과의 단계 7과 같은 계산). 단계 7은 보고하지 않는다. 단계 7의 출력은 저장
+# 스팬 S_6 ⊇ S_5에 직교하므로 단계 6의 재풀이 경쟁자다. L-브래킷(E21d 원좌표 MC, 단계 6이 20시드 모두 모드 8)과 근축퇴
+# 단면(E26b, 단계 6의 부정확은 모두 건너뛴 모드 5를 찾은 낮은 모드 — 마지막 단계의 음성 대조).
+E29_TAGS = {"lbracket": "e29_lb_s7", "near": "e29_nr_s7"}
+E29_TAU = {"lbracket": f"manifest_p5_tau_{E21_TAU_TAG}.json", "near": E26_TAU["near"]}
+E29_STAGE = 7
+
+
+def e29_settings(structure: str) -> dict:
+    if structure not in E29_TAGS:
+        raise ValueError(f"E29 구조는 {sorted(E29_TAGS)} 중 하나여야 합니다: {structure!r}")
+    base = e21d_settings() if structure == "lbracket" else e26_settings("near")
+    return {**base, "tag": E29_TAGS[structure], "n_modes": E29_STAGE, "save_hist": True,
+            "stage_from": {"npz": os.path.join(manifest.P5_OUTDIR, f"p5_params_{base['tag']}.npz"), "tag": base["tag"],
+                           "arm": "exact", "cond": "mc", "n_stored": E29_STAGE - 1, "width": 128, "depth": 5,
+                           "iters": GRID_ITERS}}
+
+
+def e29_run(structure: str, outdir=None, device=None) -> dict:
+    """E29 구조 하나. τ는 그 구조의 것을 읽고(보조 분류), 참조에 모드 7이 없거나 첫 통과의 저장 망이 없으면 거부한다."""
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    tau = _tau_of(d, E29_TAU[structure])
+    kw = e29_settings(structure)
+    if E29_STAGE not in _reference(d, kw["ref_name"]):
+        raise ValueError(f"{kw['ref_name']}에 모드 {E29_STAGE}의 참조가 없다")
+    npz = os.path.join(d, os.path.basename(kw["stage_from"]["npz"]))
+    if not os.path.exists(npz):
+        raise FileNotFoundError(f"{npz}가 없다 — 첫 통과의 저장된 망이 먼저다")
+    kw["stage_from"] = {**kw["stage_from"], "npz": npz}
+    return grid_v2(outdir=d, device=device, tau=tau, **kw)
+
+# ── E30 (사전규정 2026-10-30-p5-e30-prespecification.md) — 단계적 배분 ─────────────────────────────────
+# CMAME 요건(2026-10-30) §2.1의 대안(2.1′, 사용자 선택 A). 시드마다 참조 없이:
+#   1회차 — 단계 1–6을 원좌표 첫 통과 설정(first)과 정규화 좌표(norm) 두 경로로 풀어 E27 규칙으로 고르고, 단계 7을 first로
+#           더 푼다(보고하지 않는다, 단계 6의 경쟁자).
+#   계획  — 단계 1–7 사슬의 순서 검사가 울린 가장 이른 단계 j*(1–6)를 시드마다 정한다(`p5_stats.e30_order_flags`).
+#   2회차 — j*가 있는 시드만 단계 j*를 first·norm·Fourier(ff)·held-rate(long) 넷 가운데 고르고, 단계 j* + 1–6을 다시 두 경로,
+#           단계 7을 first로 잇는다.
+# 실행은 20시드 앙상블이라 2회차에도 모든 시드가 돈다. 단계 k에서 아직 j*에 이르지 않은 시드(울리지 않은 시드 포함)의 저장
+# 단계는 1회차에서 고른 망으로 두므로 그 시드의 2회차 실행은 1회차를 되풀이하고, 결과는 1회차의 것을 쓴다. 비용은 시드마다
+# 그 절차가 부른 실행만 센다(`p5_stats.e30`). 단계 1의 first는 첫 통과(E26b), 양단 고정의 단계 1 norm은 E28a의 것과 같은
+# 계산이라 그대로 쓴다.
+E30_STRUCTURES = {"cc": "clamped2", "nr": "near"}
+E30_BASE_PATHS = ("first", "norm")
+E30_ESCALATE = ("ff", "long")
+E30_LOOKAHEAD = 7
+E30_REUSE = {("cc", 1, "first"): E26_TAGS["clamped2"], ("cc", 1, "norm"): "e28_cc_s1_norm",
+             ("nr", 1, "first"): E26_TAGS["near"]}
+E30_PRESPEC = "docs/paper4-p5/2026-10-30-p5-e30-prespecification.md"
+# 양단 고정 상자의 E13 참조는 모드 1–6뿐이다. 단계 7(보고하지 않는 경쟁자)의 기록이 채점할 모드 7의 Λ*는 같은 사다리·두 면
+# 고정의 8모드 참조(`run_p5.structure_reference`)에서 읽는다. 단계 1–6은 첫 통과·E28a와 같은 참조로 채점한다.
+E30_CC_REF7 = "p5_reference_e13b_clamped2_m8"
+
+
+def _staged_spec(s: str) -> dict:
+    """단계적 배분 정책(아래 `e30_*`)을 돌리는 구조 — 실험 이름(태그·파일 접두), 첫 통과 설정, 다시 쓰는 1회차 실행, 단계 7의
+    참조(없으면 그 구조의 참조), τ 파일, 사전규정. E30(양단 고정·근축퇴)과 E31(정책을 고정한 보류 기하)이 같은 함수를 쓴다."""
+    if s in E30_STRUCTURES:
+        return {"exp": "e30", "base": lambda: e26_settings(E30_STRUCTURES[s]), "tau": E26_TAU[E30_STRUCTURES[s]],
+                "ref7": E30_CC_REF7 if s == "cc" else None, "prespec": E30_PRESPEC,
+                "reuse": {(k_, p_): t for (s_, k_, p_), t in E30_REUSE.items() if s_ == s}}
+    if s in E31_STRUCTURES:
+        return {"exp": "e31", "base": lambda: e31_settings(s), "tau": E31_TAU[s], "ref7": None,
+                "prespec": E31_PRESPEC, "reuse": {(1, "first"): E31_FP_TAGS[s]}}
+    raise ValueError(f"단계적 배분의 구조는 {sorted(E30_STRUCTURES) + list(E31_STRUCTURES)} 중 하나다: {s!r}")
+
+
+def _e30_check(s: str, rnd: int, k: int) -> None:
+    _staged_spec(s)
+    if int(rnd) not in (1, 2) or not 1 <= int(k) <= E30_LOOKAHEAD:
+        raise ValueError(f"E30 회차는 1·2, 단계는 1–{E30_LOOKAHEAD}다: r{rnd} s{k}")
+
+
+def e30_tag(s: str, rnd: int, k: int, path: str) -> str:
+    _e30_check(s, rnd, k)
+    spec = _staged_spec(s)
+    if int(rnd) == 1 and (int(k), path) in spec["reuse"]:
+        return spec["reuse"][(int(k), path)]
+    return f"{spec['exp']}_{s}_r{int(rnd)}_s{int(k)}_{path}"
+
+
+def e30_selection_name(s: str, rnd: int) -> str:
+    return f"p5_{_staged_spec(s)['exp']}_{s}_r{int(rnd)}_selection.json"
+
+
+def e30_plan_name(s: str) -> str:
+    return f"p5_{_staged_spec(s)['exp']}_{s}_plan.json"
+
+
+def e30_paths(rnd: int, k: int, plan: dict | None = None) -> tuple:
+    """회차 rnd 단계 k에서 도는 경로(순서가 동률을 깬다). 단계 7은 first뿐이다. 2회차는 j*가 k인 시드가 있을 때만 ff·long을 더한다."""
+    if int(k) == E30_LOOKAHEAD:
+        return ("first",)
+    if int(rnd) == 1:
+        return E30_BASE_PATHS
+    return E30_BASE_PATHS + (E30_ESCALATE if int(k) in {int(v) for v in plan["flagged"].values()} else ())
+
+
+def e30_active(rnd: int, k: int, seed: int, plan: dict | None = None) -> bool:
+    """시드가 회차 rnd 단계 k의 결과를 쓰는가. 1회차는 모든 시드, 2회차는 j* ≤ k인 시드."""
+    if int(rnd) == 1:
+        return True
+    j = plan["flagged"].get(str(int(seed)))
+    return j is not None and int(j) <= int(k)
+
+
+def e30_eligible(rnd: int, k: int, seed: int, plan: dict | None = None) -> tuple:
+    """시드가 회차 rnd 단계 k에서 고를 수 있는 경로. 2회차의 j* 단계에서만 ff·long이 더해진다."""
+    if int(k) == E30_LOOKAHEAD:
+        return ("first",)
+    if int(rnd) == 2 and plan["flagged"].get(str(int(seed))) == int(k):
+        return E30_BASE_PATHS + E30_ESCALATE
+    return E30_BASE_PATHS
+
+
+def e30_chain_choice(s: str, j: int, seed: int, sel1: dict, sel2: dict | None, plan: dict | None) -> tuple:
+    """시드의 사슬에서 단계 j를 차지하는 해 — (회차, 경로, 태그). 2회차에서 그 시드가 단계 j에 이르렀으면 2회차의 선택이다."""
+    if sel2 is not None and e30_active(2, j, seed, plan):
+        p_ = sel2["stages"][str(int(j))]["choice"][str(int(seed))]
+        return 2, p_, e30_tag(s, 2, j, p_)
+    p_ = sel1["stages"][str(int(j))]["choice"][str(int(seed))]
+    return 1, p_, e30_tag(s, 1, j, p_)
+
+
+def e30_stage_sources(s: str, j: int, sel1: dict, sel2: dict | None = None, plan: dict | None = None,
+                      data_dir: str | None = None, n_seeds: int | None = None) -> list:
+    """단계 j의 저장 출처 — (태그, 경로)마다 그 망 파일과 시드들(`p5_exploit.load_mixed_stages`의 꼴)."""
+    d = manifest.P5_OUTDIR if data_dir is None else data_dir
+    groups = {}
+    for s_ in range(GRID_SEEDS_A if n_seeds is None else int(n_seeds)):
+        _, p_, tag = e30_chain_choice(s, j, s_, sel1, sel2, plan)
+        groups.setdefault((tag, p_), []).append(s_)
+    return [{"npz": os.path.join(d, f"p5_params_{tag}.npz"), "arm": "exact", "cond": "mc", "mode": int(j),
+             **e27_path_spec(p_), "seeds": sorted(v), "path": p_, "tag": tag} for (tag, p_), v in sorted(groups.items())]
+
+
+def e30_settings(s: str, rnd: int, k: int, path: str, sel1: dict, sel2: dict | None = None,
+                 plan: dict | None = None, data_dir: str | None = None) -> dict:
+    _e30_check(s, rnd, k)
+    k, rnd = int(k), int(rnd)
+    spec = _staged_spec(s)
+    if int(rnd) == 1 and (k, path) in spec["reuse"]:
+        raise ValueError(f"{e30_tag(s, rnd, k, path)}는 이미 있는 실행을 그대로 쓴다")
+    if path not in e30_paths(rnd, k, plan):
+        raise ValueError(f"r{rnd} 단계 {k}의 경로는 {e30_paths(rnd, k, plan)} 중 하나다: {path!r}")
+    if rnd == 2 and (plan is None or not plan["flagged"] or k < int(plan["j_min"])):
+        raise ValueError(f"2회차 단계 {k}는 계획의 j_min 이후에만 돈다")
+    need = [j for j in range(1, k) if str(j) not in sel1.get("stages", {})]
+    if rnd == 2:
+        need += [j for j in range(int(plan["j_min"]), k) if str(j) not in (sel2 or {}).get("stages", {})]
+    if need:
+        raise ValueError(f"앞 단계 {sorted(set(need))}의 선택이 없다")
+    kw = {**spec["base"](), "tag": e30_tag(s, rnd, k, path), "n_modes": k, "save_hist": True}
+    if spec["ref7"] is not None and k == E30_LOOKAHEAD:
+        kw["ref_name"] = spec["ref7"]
+    if k >= 2:      # 저장 단계마다 원 일정(20,000회)만큼 난수를 넘긴다 — 경로와 무관하게 단계 k가 첫 통과의 단계 k와 같은 표본을 본다
+        kw["stage_from"] = {"mixed": [e30_stage_sources(s, j, sel1, sel2 if rnd == 2 else None, plan, data_dir)
+                                      for j in range(1, k)], "width": int(kw.get("width", 128)),
+                            "depth": int(kw.get("depth", 5)), "iters": int(kw.get("iters", GRID_ITERS))}
+    return _apply_path(kw, path)
+
+
+def _e30_files(d: str, s: str) -> tuple:
+    import json
+    load = lambda name: (json.load(open(os.path.join(d, name), encoding="utf-8"))
+                         if os.path.exists(os.path.join(d, name)) else None)
+    return load(e30_selection_name(s, 1)), load(e30_selection_name(s, 2)), load(e30_plan_name(s))
+
+
+def e30_run(s: str, rnd: int, k: int, path: str, outdir=None, device=None) -> dict:
+    """E30 실행 하나. 앞 단계의 선택(2회차는 계획도)과 그 망 파일이 있어야 한다."""
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    tau = _tau_of(d, _staged_spec(s)["tau"])
+    sel1, sel2, plan = _e30_files(d, s)
+    if int(k) >= 2 and sel1 is None:
+        raise FileNotFoundError(f"{e30_selection_name(s, 1)}가 없다 — 앞 단계를 먼저 고른다")
+    if int(rnd) == 2 and plan is None:
+        raise FileNotFoundError(f"{e30_plan_name(s)}가 없다 — 1회차의 계획이 먼저다")
+    kw = e30_settings(s, rnd, k, path, sel1 or {"stages": {}}, sel2 or {"stages": {}}, plan, data_dir=d)
+    if int(k) not in _reference(d, kw["ref_name"]):
+        raise ValueError(f"{kw['ref_name']}에 모드 {k}의 참조가 없다")
+    return grid_v2(outdir=d, device=device, tau=tau, **_check_sources(kw))
+
+
+def e30_select_run(s: str, rnd: int, k: int, outdir=None) -> dict:
+    """회차 rnd 단계 k의 후보 기록에서 시드마다 고르고 선택 파일에 더한다(이미 있으면 같은지 확인만 한다). 2회차에서 그
+    단계에 이르지 않은 시드는 1회차의 선택을 적는다(그 시드의 2회차 실행은 1회차를 되풀이할 뿐 쓰지 않는다)."""
+    import json
+    from . import p5_stats
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    k, rnd = int(k), int(rnd)
+    sel1, sel2, plan = _e30_files(d, s)
+    if rnd == 2 and plan is None:
+        raise FileNotFoundError(f"{e30_plan_name(s)}가 없다")
+    cands = {p_: e30_tag(s, rnd, k, p_) for p_ in e30_paths(rnd, k, plan)}
+    recs = {p_: p5_stats.load(d, t) for p_, t in cands.items()}
+    seeds = sorted({int(r["seed"]) for r in recs["first"] if int(r["mode"]) == k})
+    eligible = {s_: e30_eligible(rnd, k, s_, plan) for s_ in seeds}
+    choice = p5_stats.e30_select_stage(recs, k, eligible)
+    if rnd == 2:
+        for s_ in seeds:
+            if not e30_active(2, k, s_, plan):
+                choice[s_] = sel1["stages"][str(k)]["choice"][str(s_)]
+    name = e30_selection_name(s, rnd)
+    p = os.path.join(d, name)
+    sel = json.load(open(p, encoding="utf-8")) if os.path.exists(p) else {"stages": {}}
+    entry = {"choice": {str(s_): v for s_, v in sorted(choice.items())}, "candidates": cands,
+             "eligible": {str(s_): list(v) for s_, v in sorted(eligible.items())}, "rule": p5_stats.E30_RULE}
+    if rnd == 2:
+        entry["active"] = [s_ for s_ in seeds if e30_active(2, k, s_, plan)]
+    old = sel["stages"].get(str(k))
+    if old is not None:
+        if old["choice"] != entry["choice"]:
+            raise ValueError(f"{name} 단계 {k}의 선택이 이미 있고 다르다 — 덮어쓰지 않는다")
+        return sel
+    sel["stages"][str(k)] = entry
+    manifest.write_json(p, sel)
+    manifest.write_json(os.path.join(d, "manifest_" + name), manifest.build({
+        "driver": "run_p5_neural.e30_select_run", "structure": s, "round": rnd, "stage": k,
+        "reads": sorted(cands.values()), "rule": p5_stats.E30_RULE, "prespecification": _staged_spec(s)["prespec"]}))
+    return sel
+
+
+def e30_plan_run(s: str, outdir=None) -> dict:
+    """1회차 사슬(단계 1–7)에서 시드마다 순서 검사가 울린 단계와 가장 이른 j*(1–6)를 정해 계획 파일에 쓴다. 참조를 읽지 않는다."""
+    from . import p5_stats
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    sel1, _, old = _e30_files(d, s)
+    if sel1 is None or any(str(k) not in sel1["stages"] for k in range(1, E30_LOOKAHEAD + 1)):
+        raise ValueError(f"1회차 단계 1–{E30_LOOKAHEAD}의 선택이 먼저다")
+    recs = {}
+    for k in range(1, E30_LOOKAHEAD + 1):
+        for p_ in e30_paths(1, k):
+            recs[(k, p_)] = {int(r["seed"]): r for r in p5_stats.load(d, e30_tag(s, 1, k, p_)) if int(r["mode"]) == k}
+    flags, flagged = {}, {}
+    for s_ in range(GRID_SEEDS_A):
+        chain = {k: recs[(k, sel1["stages"][str(k)]["choice"][str(s_)])][s_] for k in range(1, E30_LOOKAHEAD + 1)}
+        f = p5_stats.e30_order_flags(chain)
+        flags[str(s_)] = f
+        if f:
+            flagged[str(s_)] = int(min(f))
+    plan = {"flagged": flagged, "flags": flags, "j_min": min(flagged.values()) if flagged else None,
+            "rule": p5_stats.E30_ORDER_RULE}
+    if old is not None:
+        if old != plan:
+            raise ValueError(f"{e30_plan_name(s)}가 이미 있고 다르다 — 덮어쓰지 않는다")
+        return old
+    manifest.write_json(os.path.join(d, e30_plan_name(s)), plan)
+    manifest.write_json(os.path.join(d, "manifest_" + e30_plan_name(s)), manifest.build({
+        "driver": "run_p5_neural.e30_plan_run", "structure": s, "rule": p5_stats.E30_ORDER_RULE,
+        "reads": sorted({e30_tag(s, 1, k, p_) for k, p_ in recs}), "prespecification": _staged_spec(s)["prespec"]}))
+    return plan
+
+# ── E31 (사전규정 2026-11-03-p5-e31-prespecification.md) — 정책을 고정한 보류 평가, 같은 예산 대조(B3) ─────────────────
+# E30의 단계적 배분(4916ba6의 경로·선택 규칙·순서 검사·두 회차, 위의 `e30_*`)을 그대로 두고, 개발에 쓰지 않은 두 기하에서 돌린다
+# (검토 R §10.3의 평가 집합, 사용자 결정 2026-11-03): 양단 고정 상자 h/L = 0.07(요건 §2.3(a)의 축, 개발 값 0.04)과 L-브래킷
+# 팔 길이 a = 0.4(개발 값 0.5). 첫 통과 설정은 그 계열의 개발 첫 통과(양단 고정 E26b, L-브래킷 E21d)이고 기하·참조·태그만
+# 바뀐다. L-브래킷만 둘이 더 바뀐다.
+#   MC 점 수 — E21d 규칙(E21 격자족 45개의 평균 점수)을 a = 0.4에 적용한 1,210(1,210.07)이다.
+#   감사 격자 — E21 규칙의 (24, 12, 12)는 a = 0.4에서 인증을 통과하지 못한다(제작해 오차 1.8 × 10⁻²). a = 0.5에서의 통과는
+#   팔 2의 중심이 제작해의 진동 성분을 홀함수로 만드는 자리에 있어 오차가 상쇄된 덕이었다. 그래서 팔 길이 방향 점 수만 6씩
+#   키운 후보 가운데 인증을 통과한 가장 작은 (42, 12, 12)를 쓴다(4.6 × 10⁻⁸). 사다리는 감사 격자의 4/3, 2, 8/3배(E21과 같은 비)다.
+# 참조는 모드 1–10이라 단계 7도 같은 참조로 채점한다. τ는 그 계열의 것(보조 분류)이다. 단계 1의 first는 그 구조의 첫 통과다.
+E31_PRESPEC = "docs/paper4-p5/2026-11-03-p5-e31-prespecification.md"
+E31_STRUCTURES = ("cc07", "lb04")
+E31_GEOMETRY = {"cc07": {"L": 1.0, "b": 0.20, "h": 0.07, "E": 1.0, "rho": 1.0, "nu": 0.29},
+                "lb04": {**E21_GEOMETRY, "a": 0.40}}
+E31_REF = {"cc07": "p5_reference_e31_cc07", "lb04": "p5_reference_e31_lb04"}
+E31_REF_MODES = 10
+E31_FP_TAGS = {"cc07": "e31_cc07_fp", "lb04": "e31_lb04_fp"}
+E31_TAU = {"cc07": E26_TAU["clamped2"], "lb04": f"manifest_p5_tau_{E21_TAU_TAG}.json"}
+E31_LB04_MC_POINTS = 1210
+E31_LB04_AUDIT_GRID = (42, 12, 12)
+E31_LB04_CHECK_GRID = (56, 16, 16)
+E31_LB04_LADDER = ((56, 16, 16), (84, 24, 24), (112, 32, 32))
+
+
+def e31_settings(s: str) -> dict:
+    """보류 구조의 첫 통과 설정(`grid_v2` 인자, τ 없음). 단계적 배분의 실행은 여기에 태그·단계·경로를 얹는다(`e30_settings`)."""
+    if s == "cc07":
+        return {**e26_settings("clamped2"), "tag": E31_FP_TAGS[s], "geometry": dict(E31_GEOMETRY[s]),
+                "ref_name": E31_REF[s], "save_hist": True}
+    if s == "lb04":
+        return {**e21d_settings(), "tag": E31_FP_TAGS[s], "geometry": dict(E31_GEOMETRY[s]), "ref_name": E31_REF[s],
+                "mc_points": E31_LB04_MC_POINTS, "audit_grid": E31_LB04_AUDIT_GRID,
+                "check_grid": E31_LB04_CHECK_GRID, "check_grids": list(E31_LB04_LADDER), "save_hist": True}
+    raise ValueError(f"E31 구조는 {E31_STRUCTURES} 중 하나다: {s!r}")
+
+
+def e31_reference(s: str, outdir=None) -> dict:
+    """보류 구조의 참조(모드 1–10) — 그 계열과 같은 사다리·규칙(`run_p5.structure_reference`). 형상 인증은 양단 고정이 기본 격자,
+    L-브래킷이 그 구조의 감사 격자에서 한다(E13-b·E21과 같다)."""
+    from . import run_p5
+    if s == "cc07":
+        return run_p5.structure_reference("e31_cc07", dict(E31_GEOMETRY[s]), faces="two_face", ladder=run_p5.LADDER,
+                                          n_modes=E31_REF_MODES, outdir=outdir)
+    if s == "lb04":
+        return run_p5.structure_reference("e31_lb04", dict(E31_GEOMETRY[s]), faces="x0", ladder=run_p5.L_LADDER,
+                                          n_modes=E31_REF_MODES, cert_grid=E31_LB04_AUDIT_GRID, outdir=outdir)
+    raise ValueError(f"E31 구조는 {E31_STRUCTURES} 중 하나다: {s!r}")
+
+
+def e31_fp_run(s: str, outdir=None, device=None) -> dict:
+    """보류 구조의 첫 통과(단계 1–6, 20시드). 참조와 그 계열의 τ 파일이 없으면 거부한다."""
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    tau = _tau_of(d, E31_TAU[s])
+    kw = {**e31_settings(s), "n_modes": 6}
+    if 6 not in _reference(d, kw["ref_name"]):
+        raise ValueError(f"{kw['ref_name']}에 모드 6의 참조가 없다")
+    return grid_v2(outdir=d, device=device, tau=tau, **kw)
+
+
+# B3(검토 R §6.4) — 같은 예산의 단순 전략. E30-cc와 같은 구조·설정에서 held-rate 일정(학습률 감소 6,666·13,332회, 그 뒤 유지,
+# `long` 경로와 같은 감소 시점)을 단계마다 49,400회(E30-cc 시드 평균 비용 비 2.47 × 20,000회)로 여섯 단계에 고르게 쓴다. 한
+# 실행이고 검사·후보 선택·재풀이가 없다. 참조는 E30-cc 단계 1–6과 같다.
+B3_TAG = "e31_b3_cc_hr"
+B3_ITERS = 49_400
+
+
+def b3_settings() -> dict:
+    return {**e26_settings("clamped2"), "tag": B3_TAG, "n_modes": 6, "iters": B3_ITERS,
+            "lr_milestones": E23_MILESTONES, "save_hist": True}
+
+
+def b3_run(outdir=None, device=None) -> dict:
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    tau = _tau_of(d, E26_TAU["clamped2"])
+    kw = b3_settings()
+    if 6 not in _reference(d, kw["ref_name"]):
+        raise ValueError(f"{kw['ref_name']}에 모드 6의 참조가 없다")
+    return grid_v2(outdir=d, device=device, tau=tau, **kw)
+
+# ── E31r (사전규정 2026-11-07-p5-e31r-prespecification.md) — E31-lb04 단계 6의 사후 재풀이 판독 ─────────────────
+# E31-lb04는 단계 6이 20시드 모두 모드 7에 섰고, 모드 6과의 간격(2.9%)이 t보다 좁아 울리지 않아 2회차가 없었다. 울렸다면
+# (가상 계획: 20시드 모두 j* = 6) 2회차가 단계 6에 더했을 ff·long을 1회차 사슬 위에서 그대로 푼다. first·norm은 1회차 실행을
+# 그대로 쓴다(같은 계산이다, E30 결과 문서 §9). 등록 판정이 아니고, 태그는 E31의 2회차와 섞이지 않게 따로 둔다. 가상 계획은
+# 파일로 쓰지 않는다. 단계 7은 다시 풀지 않는다.
+E31R_PRESPEC = "docs/paper4-p5/2026-11-07-p5-e31r-prespecification.md"
+E31R_STRUCTURE = "lb04"
+E31R_STAGE = 6
+E31R_PATHS = E30_ESCALATE
+
+
+def e31r_tag(path: str) -> str:
+    if path not in E31R_PATHS:
+        raise ValueError(f"E31r 경로는 {E31R_PATHS} 중 하나다: {path!r}")
+    return f"e31r_{E31R_STRUCTURE}_s{E31R_STAGE}_{path}"
+
+
+def e31r_plan(n_seeds: int = GRID_SEEDS_A) -> dict:
+    """가상 계획 — 모든 시드가 단계 6에서 울렸다고 둔다."""
+    return {"flagged": {str(s_): E31R_STAGE for s_ in range(int(n_seeds))}, "j_min": E31R_STAGE}
+
+
+def e31r_settings(path: str, sel1: dict, data_dir: str | None = None) -> dict:
+    """2회차 j* = 6의 그 경로 설정(`e30_settings`)에 태그만 바꾼다. 저장 단계 1–5는 1회차 사슬이다."""
+    tag = e31r_tag(path)
+    kw = e30_settings(E31R_STRUCTURE, 2, E31R_STAGE, path, sel1, {"stages": {}}, e31r_plan(), data_dir=data_dir)
+    kw["tag"] = tag
+    return kw
+
+
+def e31r_run(path: str, outdir=None, device=None) -> dict:
+    """E31r 실행 하나. E31-lb04의 1회차 선택(단계 1–6)과 울림 없는 계획이 있어야 한다."""
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    tau = _tau_of(d, _staged_spec(E31R_STRUCTURE)["tau"])
+    sel1, sel2, plan = _e30_files(d, E31R_STRUCTURE)
+    if sel1 is None or any(str(j) not in sel1["stages"] for j in range(1, E31R_STAGE + 1)):
+        raise FileNotFoundError(f"{e30_selection_name(E31R_STRUCTURE, 1)}에 단계 1–{E31R_STAGE}의 선택이 없다")
+    if plan is None or plan["flagged"] or sel2 is not None:
+        raise ValueError("E31r는 울림이 없어 2회차가 없던 E31-lb04의 사후 판독이다")
+    kw = e31r_settings(path, sel1, data_dir=d)
+    if E31R_STAGE not in _reference(d, kw["ref_name"]):
+        raise ValueError(f"{kw['ref_name']}에 모드 {E31R_STAGE}의 참조가 없다")
+    return grid_v2(outdir=d, device=device, tau=tau, **_check_sources(kw))
+
 # ── E21e (사전규정 2026-10-09-p5-e21e-prespecification.md) ─────────────────────
 # E21c는 기준 구조의 밀도(팔의 단위 길이당 16–20점)로 모드 3만 고쳤다. 기준 구조에서 깊은 모드를 살린
 # 밀도는 그보다 높은 고해상 격자족(E3, 평균 5,400점)이다. 같은 점수의 격자족을 L에 그대로 쓴다 — 팔의
@@ -1652,13 +2778,16 @@ def oracle_fit(outdir=None, mode: int = E1_MODE, n_seeds: int = E1_SEEDS,
                lr: float = 2e-3, quick: bool = False, device=None,
                normalize_input: bool = False, tag: str = "", geometry=None,
                ref_name: str = "p5_reference", ref_level=None, fit_grid=None,
-               check_grids=None, deflate=None) -> dict:
+               check_grids=None, deflate=None, prespec=None, save_params: bool = False) -> dict:
     """§E1 — 참조 모드에 변위와 변형률 **둘 다** 적합시키고 Rayleigh 몫을 잰다.
 
     E21f(2026-10-10)의 선택 인자 — 기본값이면 커밋된 상자 경로 그대로다. `geometry`·`ref_name`·`ref_level`은
     다른 구조의 참조, `fit_grid`는 맞추는 격자(기본 감사 격자), `check_grids`는 맞춘 격자 밖에서 Rayleigh 몫을
     다시 재는 격자들(첫 격자에서는 FEM과의 MAC도), `deflate`={npz, cond, n, grid, width, depth}는 다른 실행이
-    저장한 모드 1–n의 원시 상태로 맞춘 함수를 그 격자에서 정확 사영한 뒤의 Rayleigh 몫(`Lam_deflated`)이다."""
+    저장한 모드 1–n의 원시 상태로 맞춘 함수를 그 격자에서 정확 사영한 뒤의 Rayleigh 몫(`Lam_deflated`)이다.
+
+    E31q(2026-11-11): `save_params`는 맞춘 망을 `p5_params_<tag>.npz`(키 `exact_mc_m{mode}_…`, `p5_exploit.load_stage`가 읽는
+    꼴)로 남긴다 — 다른 저장 집합으로 다시 사영할 때 다시 맞추지 않도록. 기본은 남기지 않는다(커밋된 호출 그대로)."""
     import torch
     from torch.func import vmap
 
@@ -1718,6 +2847,11 @@ def oracle_fit(outdir=None, mode: int = E1_MODE, n_seeds: int = E1_SEEDS,
         r.sum().backward()
         opt.step(); sched.step()
     secs = time.perf_counter() - t0
+    if save_params:
+        if not tag:
+            raise ValueError("save_params는 태그가 있어야 한다(p5_params_<tag>.npz)")
+        np.savez_compressed(os.path.join(d, f"p5_params_{tag}.npz"),
+                            **{f"exact_mc_m{int(mode)}_{k_}": v.detach().cpu().numpy() for k_, v in ens.params.items()})
 
     rows = []
     with torch.no_grad():
@@ -1741,7 +2875,9 @@ def oracle_fit(outdir=None, mode: int = E1_MODE, n_seeds: int = E1_SEEDS,
                                   n_seeds=n_seeds, width=int(deflate["width"]),
                                   depth=int(deflate["depth"]), device=dev)
             pd_, wd = p5n.quadrature(tuple(int(v) for v in deflate["grid"]), dev, g)
-            Rd = [p5n.state_batch(e, pd_, None, None, g) for e in ensD]
+            # E25: 저장 망이 정규화 좌표로 학습됐으면(`deflate["normalize"]`) 같은 축척으로 잰다. 없으면 커밋된 원좌표 경로다.
+            sd_ = (torch.tensor(p5n.input_scale(g), device=dev) if deflate.get("normalize") else None)
+            Rd = [p5n.state_batch(e, pd_, sd_, None, g) for e in ensD]
             Sd = vmap(lambda p: p5n._state_one(p, ens.base, pd_, sc))(ens.params)
             Pd = vmap(lambda s_, *q: p5n._project_exact(s_, torch.stack(q, 0), wd))(Sd, *Rd)
             Ed = p5n.young_at(pd_, g)
@@ -1772,7 +2908,7 @@ def oracle_fit(outdir=None, mode: int = E1_MODE, n_seeds: int = E1_SEEDS,
             f"mass MAC >= {LOCK_MASS_MIN} and energy MAC < {LOCK_ENERGY_MAX}",
         "n_locking_signature": sum(1 for r in rows if r["locking_signature"]),
         "driver": "run_p5_neural.oracle_fit", "quick": bool(quick),
-        "prespecification": "2026-09-11-p5-followup-prespecification.md, E1",
+        "prespecification": prespec or "2026-09-11-p5-followup-prespecification.md, E1",
         "mode": mode, "n_seeds": n_seeds, "iters": iters,
         "architecture": [width, depth], "audit_grid": list(fgrid),
         "geometry": _geometry_record(g), "reference": ref_name,
@@ -1781,6 +2917,7 @@ def oracle_fit(outdir=None, mode: int = E1_MODE, n_seeds: int = E1_SEEDS,
         "deflate": None if not deflate else {k: (list(v) if isinstance(v, tuple) else v)
                                              for k, v in deflate.items()},
         "launch": manifest.launch_provenance(),
+        "params": f"p5_params_{tag}.npz" if save_params else None,
         "loss": "(1 - mass MAC) + (1 - energy MAC) against the FEM reference mode",
         "e_lam_median": med, "rule": E1_ELAM_RULE, "verdict": verdict,
         "one_sided": "a median at or above the rule is indeterminate, not evidence "
@@ -1821,6 +2958,112 @@ def e21f_run(outdir=None, device=None) -> dict:
         k["deflate"] = {**k["deflate"], "npz": os.path.join(d, "p5_params_e21lb_exact_mc1.npz")}
         out[m] = oracle_fit(outdir=d, device=device, **k)
     return out
+
+
+# ── E31p (사전규정 2026-11-08-p5-e31p-prespecification.md) — E31-lb04 단계 6의 표현 판독 ──────────────────────
+# E31-lb04(L-브래킷 a 0.4)의 단계 6은 20시드 모두 모드 6(면외 굽힘, Λ 1.632)을 건너뛰고 모드 7(면내 횡, 1.680)에 섰다.
+# E21f와 같은 절차(원고 4.4절)로 시행공간이 모드 6을 담는지 묻는다: 모드 6에 맞춘 망을 E31-lb04 첫 통과가 저장한 모드
+# 1–5로 감사 격자에서 정확 사영한 Rayleigh 몫이 같은 시드 단계 6의 Λ보다 낮은가. 대조는 단계 6이 실제로 찾은 모드 7.
+# 맞추는 격자는 E21f와 같은 단위 길이당 점 수, 다시 재는 격자는 그 구조의 감사 격자와 사다리 최상단이다. 사후 판독이고
+# E31의 등록 판정은 바뀌지 않는다.
+E31P_PRESPEC = "docs/paper4-p5/2026-11-08-p5-e31p-prespecification.md"
+E31P_MODES = (6, 7)
+
+
+def e31p_settings(mode: int) -> dict:
+    s = "lb04"
+    return {"mode": int(mode), "tag": f"e31p_{s}_m{int(mode)}", "geometry": dict(E31_GEOMETRY[s]),
+            "ref_name": E31_REF[s], "ref_level": E21_REF_LEVEL, "fit_grid": E21F_FIT_GRID,
+            "check_grids": [E31_LB04_AUDIT_GRID, E31_LB04_LADDER[-1]], "prespec": E31P_PRESPEC,
+            "deflate": {"npz": os.path.join(manifest.P5_OUTDIR, f"p5_params_{E31_FP_TAGS[s]}.npz"),
+                        "cond": "mc", "n": 5, "grid": E31_LB04_AUDIT_GRID, "width": 128, "depth": 5}}
+
+
+def e31p_run(mode: int, outdir=None, device=None) -> dict:
+    """E31p 하나(모드 6 또는 대조 모드 7). 저장 모드는 출력 폴더의 E31-lb04 첫 통과 파라미터에서 읽는다."""
+    if int(mode) not in E31P_MODES:
+        raise ValueError(f"E31p 모드는 {E31P_MODES} 중 하나다: {mode!r}")
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    k = e31p_settings(mode)
+    k["deflate"] = {**k["deflate"], "npz": os.path.join(d, f"p5_params_{E31_FP_TAGS['lb04']}.npz")}
+    if mode not in _reference(d, k["ref_name"]):
+        raise ValueError(f"{k['ref_name']}에 모드 {mode}의 참조가 없다")
+    if not os.path.exists(k["deflate"]["npz"]):
+        raise FileNotFoundError(f"{k['deflate']['npz']}가 없다 — E31-lb04 첫 통과가 먼저다")
+    return oracle_fit(outdir=d, device=device, **k)
+
+
+# ── E31q (사전규정 2026-11-11-p5-e31q-prespecification.md) — E31p의 적합을 다시 하고 망을 남긴다 ───────────────────
+# r6.5 검토 P1: E31p는 맞춘 망을 첫 통과의 저장 모드 1–5로 사영했는데 원고의 결론은 1회차에서 고른 사슬에 관한 것이다. 맞춘 망이
+# 남아 있지 않아 같은 설정·같은 시드로 다시 맞추고 망을 남긴다(태그·사전규정·`save_params`만 다르다). 1회차 사슬의 저장 모드로
+# 다시 사영하는 판독은 `p5_exploit.e31q_probe_chain`이다. 사후 판독이고 E31·E31p의 판정은 바뀌지 않는다.
+E31Q_PRESPEC = "docs/paper4-p5/2026-11-11-p5-e31q-prespecification.md"
+E31Q_MODES = E31P_MODES
+
+
+def e31q_tag(mode: int) -> str:
+    if int(mode) not in E31Q_MODES:
+        raise ValueError(f"E31q 모드는 {E31Q_MODES} 중 하나다: {mode!r}")
+    return f"e31q_lb04_m{int(mode)}"
+
+
+def e31q_settings(mode: int) -> dict:
+    return {**e31p_settings(mode), "tag": e31q_tag(mode), "prespec": E31Q_PRESPEC, "save_params": True}
+
+
+def e31q_run(mode: int, outdir=None, device=None) -> dict:
+    """E31q 적합 하나(모드 6 또는 대조 모드 7) — E31p와 같은 입력 검사."""
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    k = e31q_settings(mode)
+    k["deflate"] = {**k["deflate"], "npz": os.path.join(d, f"p5_params_{E31_FP_TAGS['lb04']}.npz")}
+    if mode not in _reference(d, k["ref_name"]):
+        raise ValueError(f"{k['ref_name']}에 모드 {mode}의 참조가 없다")
+    if not os.path.exists(k["deflate"]["npz"]):
+        raise FileNotFoundError(f"{k['deflate']['npz']}가 없다 — E31-lb04 첫 통과가 먼저다")
+    return oracle_fit(outdir=d, device=device, **k)
+
+
+# ── E32 (사전규정 2026-11-09-p5-e32-prespecification.md) ─────────────────────────────────────────────────────────────
+# 대수 층 보강(CMAME r6.1 독립 논리 검토 §2.3). 원고 6.2절 — 저장 관행(Rowan 외 [2]: 저장할 때 감사 격자에서 직교화하고 쓸 때
+# 자기 계수로 뺀다, 식 (3))의 직교성은 매 반복 다시 뽑는 표본 위에서 남지 않는다 — 은 기준 구조에서만 쟀다.
+# (a) T-브래킷: 원좌표 첫 통과(E26d — 정확 사영·원시 저장·매 반복 균등 MC 1,651점)와 같은 설정·같은 시드·같은 표본 순서에서
+#     사영 규칙과 저장 규약만 저장 관행으로 바꾼다. 단계 1·2는 저장 함수가 하나 이하라 두 규칙이 같다.
+# (b) 기준 구조 B = 283(1,134의 1/4): 저장 관행과, 같은 표본의 정확 사영 대조. B 1,134(E15)·4,536(E20)과 함께 드리프트의
+#     B^{−1/2}와 사영 질량의 손실을 세 점으로 읽는다. 계기는 E15·E20과 같다(사다리·Gram·시드별 스팬·파라미터).
+E32_PRESPEC = "docs/paper4-p5/2026-11-09-p5-e32-prespecification.md"
+E32_TAGS = {"tb_storage": "e32_tb_orth_mc", "b283_storage": "e32_b283_orth_mc", "b283_exact": "e32_b283_exact_mc"}
+E32_B_SMALL = E17_MC_POINTS // 4         # 283 — 표본 비직교 O(1/√B)를 두 배로
+E32_TAU = {"tb_storage": E26_TAU["tbracket_raw"], "b283_storage": _BASE_TAU, "b283_exact": _BASE_TAU}
+
+
+def e32_settings(cond: str) -> dict:
+    """E32 실행 하나의 `grid_v2` 인자. τ는 넣지 않는다 — `e32_run`이 그 구조의 보정 파일에서 읽는다(보조 분류용)."""
+    if cond not in E32_TAGS:
+        raise ValueError(f"E32 조건은 {sorted(E32_TAGS)} 중 하나여야 합니다: {cond!r}")
+    if cond == "tb_storage":
+        return {**e26_settings("tbracket_raw"), "tag": E32_TAGS[cond], "arms": ("diagonal",),
+                "storage": "orthogonalized", "batch_diag": True}
+    k, _ = followup_settings("e20r_b4")
+    k = {**k, "tag": E32_TAGS[cond], "mc_points": E32_B_SMALL}
+    if cond == "b283_exact":
+        # E15-b와 같다: 원시 저장·정확 사영, batch_diag는 원시 출력의 비대각을 남기는 계측으로 둔다.
+        k.update(arms=("exact",), storage="raw")
+    return k
+
+
+def e32_run(cond: str, outdir=None, device=None) -> dict:
+    """E32 실행 하나. τ 보정 파일과 참조가 출력 폴더에 없으면 거부한다."""
+    import json
+    d = manifest.ensure_outdir(outdir, default=manifest.P5_OUTDIR)
+    k = e32_settings(cond)
+    p = os.path.join(d, E32_TAU[cond])
+    if not os.path.exists(p):
+        raise FileNotFoundError(f"{p}가 없다 — 그 구조의 τ 보정이 먼저다")
+    ref = k.get("ref_name", "p5_reference")
+    if not os.path.exists(os.path.join(d, f"{ref}.csv")):
+        raise FileNotFoundError(f"{ref}.csv가 없다 — 참조 계산이 먼저다")
+    tau = float(json.load(open(p, encoding="utf-8"))["tau"])
+    return grid_v2(outdir=d, device=device, tau=tau, **k)
 
 # ── E2·E3 판정 (사전규정의 규칙을 코드로 박는다) ─────────────────────────────
 # 결과를 보고 규칙을 고르는 일이 없도록, 판정을 손이 아니라 이 함수가 한다.

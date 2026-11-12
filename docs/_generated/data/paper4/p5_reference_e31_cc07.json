@@ -1,0 +1,613 @@
+{
+  "tag": "e31_cc07",
+  "geometry": {
+    "L": 1.0,
+    "b": 0.2,
+    "h": 0.07,
+    "E": 1.0,
+    "rho": 1.0,
+    "nu": 0.29
+  },
+  "faces": "two_face",
+  "ladder": [
+    [
+      12,
+      4,
+      2
+    ],
+    [
+      24,
+      8,
+      4
+    ],
+    [
+      48,
+      16,
+      8
+    ]
+  ],
+  "cert_grid": [
+    16,
+    8,
+    8
+  ],
+  "fraction_grid": [
+    24,
+    12,
+    10
+  ],
+  "start_vector": "ones",
+  "gap_rule": 0.01,
+  "clusters": [
+    [
+      1
+    ],
+    [
+      2
+    ],
+    [
+      3
+    ],
+    [
+      4
+    ],
+    [
+      5
+    ],
+    [
+      6
+    ],
+    [
+      7
+    ],
+    [
+      8
+    ],
+    [
+      9
+    ],
+    [
+      10
+    ]
+  ],
+  "level_clusters": [
+    [
+      [
+        1
+      ],
+      [
+        2
+      ],
+      [
+        3
+      ],
+      [
+        4
+      ],
+      [
+        5
+      ],
+      [
+        6
+      ],
+      [
+        7
+      ],
+      [
+        8
+      ],
+      [
+        9
+      ],
+      [
+        10
+      ]
+    ],
+    [
+      [
+        1
+      ],
+      [
+        2
+      ],
+      [
+        3
+      ],
+      [
+        4
+      ],
+      [
+        5
+      ],
+      [
+        6
+      ],
+      [
+        7
+      ],
+      [
+        8
+      ],
+      [
+        9
+      ],
+      [
+        10
+      ]
+    ],
+    [
+      [
+        1
+      ],
+      [
+        2
+      ],
+      [
+        3
+      ],
+      [
+        4
+      ],
+      [
+        5
+      ],
+      [
+        6
+      ],
+      [
+        7
+      ],
+      [
+        8
+      ],
+      [
+        9
+      ],
+      [
+        10
+      ]
+    ]
+  ],
+  "clusters_consistent_across_levels": true,
+  "clusters_complete": true,
+  "gaps": [
+    4.605206876344661,
+    0.25315843779783315,
+    0.08102582149788792,
+    2.2371777766982364,
+    0.20293326625737387,
+    0.055988922491679055,
+    0.6198381310691432,
+    0.19523540771127576,
+    0.2105164586345764
+  ],
+  "worst_extrapolation_residual": 0.0011694965271674183,
+  "worst_shape_cert": 0.9999312725147915,
+  "shape_certified": true,
+  "dof_per_level": [
+    3105,
+    21573,
+    159885
+  ],
+  "solver_per_level": [
+    "dense",
+    "sparse",
+    "sparse"
+  ],
+  "modes": [
+    {
+      "mode": 1,
+      "lam_star": 0.19740207447123795,
+      "order": 1.773391709749453,
+      "increment": 0.0011694965271674183,
+      "monotone": true,
+      "used_in_grid": true,
+      "lam_levels": [
+        0.20010005521829083,
+        0.19819128841095762,
+        0.1976329355117877
+      ],
+      "fx": 0.004461548573928945,
+      "fy": 2.6710688085855848e-05,
+      "fz": 0.9955117407379852,
+      "cluster": [
+        1
+      ],
+      "dominant": "z",
+      "width_symmetry": 1.0,
+      "character": "bending",
+      "shape_cert": 0.9999962002271152
+    },
+    {
+      "mode": 2,
+      "lam_star": 1.1064794652308838,
+      "order": 1.6447333534907609,
+      "increment": 0.0009115949001331699,
+      "monotone": true,
+      "used_in_grid": true,
+      "lam_levels": [
+        1.1163416558817212,
+        1.1096334480233143,
+        1.1074881262684904
+      ],
+      "fx": 0.01801785454043519,
+      "fy": 0.9819578429505494,
+      "fz": 2.4302509015360063e-05,
+      "cluster": [
+        2
+      ],
+      "dominant": "y",
+      "width_symmetry": null,
+      "character": "lateral",
+      "shape_cert": 0.999993704258593
+    },
+    {
+      "mode": 3,
+      "lam_star": 1.3865940781041162,
+      "order": 2.1179784114786155,
+      "increment": 0.0008921293373129587,
+      "monotone": true,
+      "used_in_grid": true,
+      "lam_levels": [
+        1.4099032704859782,
+        1.391963804953505,
+        1.3878310993601373
+      ],
+      "fx": 0.014864107481691646,
+      "fy": 0.00017592011753738158,
+      "fz": 0.9849599724007709,
+      "cluster": [
+        3
+      ],
+      "dominant": "z",
+      "width_symmetry": 1.0,
+      "character": "bending",
+      "shape_cert": 0.9999803022152937
+    },
+    {
+      "mode": 4,
+      "lam_star": 1.4989440023666087,
+      "order": 2.410588172231582,
+      "increment": 0.000421313962524771,
+      "monotone": true,
+      "used_in_grid": true,
+      "lam_levels": [
+        1.5167969509778627,
+        1.5023017697631853,
+        1.4995755284038486
+      ],
+      "fx": 0.001968143835963678,
+      "fy": 0.10778342394703871,
+      "fz": 0.8902484322169977,
+      "cluster": [
+        4
+      ],
+      "dominant": "z",
+      "width_symmetry": -1.0000000000000002,
+      "character": "torsion",
+      "shape_cert": 0.9999861622637947
+    },
+    {
+      "mode": 5,
+      "lam_star": 4.8523482129762945,
+      "order": 2.4652527135386113,
+      "increment": 0.0007108291804196993,
+      "monotone": true,
+      "used_in_grid": true,
+      "lam_levels": [
+        4.957531620036392,
+        4.8713954602781335,
+        4.855797403679635
+      ],
+      "fx": 0.027246562112903768,
+      "fy": 0.0005280997434786568,
+      "fz": 0.9722253381436176,
+      "cluster": [
+        5
+      ],
+      "dominant": "z",
+      "width_symmetry": 0.9999999999999999,
+      "character": "bending",
+      "shape_cert": 0.9999312725147915
+    },
+    {
+      "mode": 6,
+      "lam_star": 5.837051084853705,
+      "order": 1.828378734523569,
+      "increment": 0.0006041669749608489,
+      "monotone": true,
+      "used_in_grid": true,
+      "lam_levels": [
+        5.881528973312048,
+        5.849575207699853,
+        5.840577638350333
+      ],
+      "fx": 0.048053197092396326,
+      "fy": 0.9518428051035536,
+      "fz": 0.00010399780405007928,
+      "cluster": [
+        6
+      ],
+      "dominant": "y",
+      "width_symmetry": null,
+      "character": "lateral",
+      "shape_cert": 0.9999773573500498
+    },
+    {
+      "mode": 7,
+      "lam_star": 6.16386128562355,
+      "order": 2.475813546503693,
+      "increment": 0.0004160690471650621,
+      "monotone": true,
+      "used_in_grid": false,
+      "lam_levels": [
+        6.243222178844749,
+        6.1781276202367,
+        6.166425877515517
+      ],
+      "fx": 0.0074150164644175755,
+      "fy": 0.10402754998526188,
+      "fz": 0.8885574335503206,
+      "cluster": [
+        7
+      ],
+      "dominant": "z",
+      "width_symmetry": -1.0000000000000002,
+      "character": "torsion",
+      "shape_cert": 0.9999503134398322
+    },
+    {
+      "mode": 8,
+      "lam_star": 9.984457545073898,
+      "order": 1.6595089341050686,
+      "increment": 0.0004309524434707327,
+      "monotone": true,
+      "used_in_grid": false,
+      "lam_levels": [
+        10.02739909904028,
+        9.998050559861777,
+        9.988760371449677
+      ],
+      "fx": 0.9971404876110581,
+      "fy": 0.002522665136296288,
+      "fz": 0.00033684725264559084,
+      "cluster": [
+        8
+      ],
+      "dominant": "x",
+      "width_symmetry": null,
+      "character": "axial",
+      "shape_cert": 0.999976847794185
+    },
+    {
+      "mode": 9,
+      "lam_star": 11.933777184662324,
+      "order": 2.7827269261823155,
+      "increment": 0.0006086726482611819,
+      "monotone": true,
+      "used_in_grid": false,
+      "lam_levels": [
+        12.277754862556334,
+        11.983762908543053,
+        11.941040948425071
+      ],
+      "fx": 0.03968900431337429,
+      "fy": 0.0010754049921213528,
+      "fz": 0.9592355906945043,
+      "cluster": [
+        9
+      ],
+      "dominant": "z",
+      "width_symmetry": 1.0000000000000002,
+      "character": "bending",
+      "shape_cert": 0.9998229397347432
+    },
+    {
+      "mode": 10,
+      "lam_star": 14.446033695711542,
+      "order": 2.608670470628326,
+      "increment": 0.00040355599714332315,
+      "monotone": true,
+      "used_in_grid": false,
+      "lam_levels": [
+        14.66291821294854,
+        14.481591954767856,
+        14.45186347924438
+      ],
+      "fx": 0.015218752801957764,
+      "fy": 0.09857242511135367,
+      "fz": 0.8862088220866885,
+      "cluster": [
+        10
+      ],
+      "dominant": "z",
+      "width_symmetry": -1.0,
+      "character": "torsion",
+      "shape_cert": 0.9998817573898375
+    }
+  ],
+  "cluster_rows": [
+    {
+      "cluster": [
+        1
+      ],
+      "size": 1,
+      "fx": 0.004461548573928945,
+      "fy": 2.6710688085855848e-05,
+      "fz": 0.9955117407379852,
+      "dominant": "z",
+      "width_symmetry": 1.0,
+      "character": "bending",
+      "shape_cert": 0.9999962002271152,
+      "per_pair": [
+        0.9999962002271152,
+        0.9999993370612232
+      ],
+      "relative_spread": 0.0
+    },
+    {
+      "cluster": [
+        2
+      ],
+      "size": 1,
+      "fx": 0.01801785454043519,
+      "fy": 0.9819578429505494,
+      "fz": 2.4302509015360063e-05,
+      "dominant": "y",
+      "width_symmetry": null,
+      "character": "lateral",
+      "shape_cert": 0.999993704258593,
+      "per_pair": [
+        0.999993704258593,
+        0.9999990010000851
+      ],
+      "relative_spread": 0.0
+    },
+    {
+      "cluster": [
+        3
+      ],
+      "size": 1,
+      "fx": 0.014864107481691646,
+      "fy": 0.00017592011753738158,
+      "fz": 0.9849599724007709,
+      "dominant": "z",
+      "width_symmetry": 1.0,
+      "character": "bending",
+      "shape_cert": 0.9999803022152937,
+      "per_pair": [
+        0.9999803022152937,
+        0.9999970479847818
+      ],
+      "relative_spread": 0.0
+    },
+    {
+      "cluster": [
+        4
+      ],
+      "size": 1,
+      "fx": 0.001968143835963678,
+      "fy": 0.10778342394703871,
+      "fz": 0.8902484322169977,
+      "dominant": "z",
+      "width_symmetry": -1.0000000000000002,
+      "character": "torsion",
+      "shape_cert": 0.9999861622637947,
+      "per_pair": [
+        0.9999861622637947,
+        0.9999985369987905
+      ],
+      "relative_spread": 0.0
+    },
+    {
+      "cluster": [
+        5
+      ],
+      "size": 1,
+      "fx": 0.027246562112903768,
+      "fy": 0.0005280997434786568,
+      "fz": 0.9722253381436176,
+      "dominant": "z",
+      "width_symmetry": 0.9999999999999999,
+      "character": "bending",
+      "shape_cert": 0.9999312725147915,
+      "per_pair": [
+        0.9999312725147915,
+        0.9999920661023449
+      ],
+      "relative_spread": 0.0
+    },
+    {
+      "cluster": [
+        6
+      ],
+      "size": 1,
+      "fx": 0.048053197092396326,
+      "fy": 0.9518428051035536,
+      "fz": 0.00010399780405007928,
+      "dominant": "y",
+      "width_symmetry": null,
+      "character": "lateral",
+      "shape_cert": 0.9999773573500498,
+      "per_pair": [
+        0.9999773573500498,
+        0.9999965372203591
+      ],
+      "relative_spread": 0.0
+    },
+    {
+      "cluster": [
+        7
+      ],
+      "size": 1,
+      "fx": 0.0074150164644175755,
+      "fy": 0.10402754998526188,
+      "fz": 0.8885574335503206,
+      "dominant": "z",
+      "width_symmetry": -1.0000000000000002,
+      "character": "torsion",
+      "shape_cert": 0.9999503134398322,
+      "per_pair": [
+        0.9999503134398322,
+        0.9999946979749361
+      ],
+      "relative_spread": 0.0
+    },
+    {
+      "cluster": [
+        8
+      ],
+      "size": 1,
+      "fx": 0.9971404876110581,
+      "fy": 0.002522665136296288,
+      "fz": 0.00033684725264559084,
+      "dominant": "x",
+      "width_symmetry": null,
+      "character": "axial",
+      "shape_cert": 0.999976847794185,
+      "per_pair": [
+        0.999976847794185,
+        0.9999971059745021
+      ],
+      "relative_spread": 0.0
+    },
+    {
+      "cluster": [
+        9
+      ],
+      "size": 1,
+      "fx": 0.03968900431337429,
+      "fy": 0.0010754049921213528,
+      "fz": 0.9592355906945043,
+      "dominant": "z",
+      "width_symmetry": 1.0000000000000002,
+      "character": "bending",
+      "shape_cert": 0.9998229397347432,
+      "per_pair": [
+        0.9998229397347432,
+        0.9999829145332382
+      ],
+      "relative_spread": 0.0
+    },
+    {
+      "cluster": [
+        10
+      ],
+      "size": 1,
+      "fx": 0.015218752801957764,
+      "fy": 0.09857242511135367,
+      "fz": 0.8862088220866885,
+      "dominant": "z",
+      "width_symmetry": -1.0,
+      "character": "torsion",
+      "shape_cert": 0.9998817573898375,
+      "per_pair": [
+        0.9998817573898375,
+        0.9999877406587621
+      ],
+      "relative_spread": 0.0
+    }
+  ],
+  "fraction_note": "per-mode fractions of cluster members depend on the arbitrary rotation inside the degenerate eigenspace; read dominant and character from the cluster rows",
+  "certification_note": "minimum cos^2 of the principal angles between adjacent ladder levels, unweighted point samples at cert_grid; equals the per-mode self-MAC for a singleton"
+}

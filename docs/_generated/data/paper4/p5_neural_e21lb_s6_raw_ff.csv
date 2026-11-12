@@ -1,0 +1,2 @@
+problem,arm,condition,mode,n,iters,invalid_quadrature,correct,lower_mode_basin,spurious,non_converged,p_correct,wilson_lo,wilson_hi,p_invalid,tau,seconds,proj_mass_median,proj_mass_min,audit_grid,check_grid,quad_drift_median,quad_drift_max,ladder_spread_median,width,depth
+P5,p5_neural_3d[exact projection],mc,6,20,20000,0,18,0,2,0,0.9,0.698966354713263,0.9721335187937312,0.0,10.0,18842.93213486398,0.28863419849024663,0.21712125612217423,24x12x12,32x16x16,0.00012692828472921883,0.001333867685846371,3.4835370590272365e-05,128,5

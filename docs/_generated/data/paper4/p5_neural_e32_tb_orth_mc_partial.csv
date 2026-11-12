@@ -1,0 +1,7 @@
+problem,arm,condition,mode,n,iters,invalid_quadrature,correct,lower_mode_basin,spurious,non_converged,p_correct,wilson_lo,wilson_hi,p_invalid,tau,seconds,proj_mass_median,proj_mass_min,audit_grid,width,depth
+P5,"p5_neural_3d[diagonal projection, orthogonalized storage]",mc,1,20,20000,0,20,0,0,0,1.0,0.8388748418837426,1.0,0.0,10.0,9306.133493885398,1.0,1.0,26x12x12,128,5
+P5,"p5_neural_3d[diagonal projection, orthogonalized storage]",mc,2,20,20000,0,20,0,0,0,1.0,0.8388748418837426,1.0,0.0,10.0,12281.76435959898,0.9999668325355189,0.9993610655362699,26x12x12,128,5
+P5,"p5_neural_3d[diagonal projection, orthogonalized storage]",mc,3,20,20000,0,20,0,0,0,1.0,0.8388748418837426,1.0,0.0,10.0,15254.733913560398,0.9961998470000963,0.8770035497879817,26x12x12,128,5
+P5,"p5_neural_3d[diagonal projection, orthogonalized storage]",mc,4,20,20000,0,6,0,14,0,0.3,0.14547724484243416,0.5189728184040686,0.0,10.0,18224.211106429808,0.0032061614915645286,0.0013769712124257298,26x12x12,128,5
+P5,"p5_neural_3d[diagonal projection, orthogonalized storage]",mc,5,20,20000,0,20,0,0,0,1.0,0.8388748418837426,1.0,0.0,10.0,21175.75138948392,0.1959779099711969,0.11099498801564217,26x12x12,128,5
+P5,"p5_neural_3d[diagonal projection, orthogonalized storage]",mc,6,20,20000,0,20,0,0,0,1.0,0.8388748418837426,1.0,0.0,10.0,24117.782831597142,0.995643436511141,0.9270975498844468,26x12x12,128,5

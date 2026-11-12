@@ -1,0 +1,90 @@
+{
+  "git_sha": "e14da7a0b129c07f00fd0ede11d051c1e1596f37",
+  "git_branch": "unknown",
+  "git_dirty": true,
+  "timestamp_utc": "2026-11-11T08:43:52.875037+00:00",
+  "python": "3.12.3",
+  "numpy": "2.1.0",
+  "scipy": "1.17.1",
+  "mpmath": "1.3.0",
+  "platform": "Linux 6.17.0-1021-nvidia aarch64",
+  "precision": "fp64 + mpmath dps=50",
+  "input_scaling": "raw",
+  "locking_signature_rule": "mass MAC >= 0.95 and energy MAC < 0.5",
+  "n_locking_signature": 0,
+  "driver": "run_p5_neural.oracle_fit",
+  "quick": false,
+  "prespecification": "docs/paper4-p5/2026-11-11-p5-e31q-prespecification.md",
+  "mode": 7,
+  "n_seeds": 20,
+  "iters": 20000,
+  "architecture": [
+    128,
+    5
+  ],
+  "audit_grid": [
+    18,
+    9,
+    7
+  ],
+  "geometry": {
+    "kind": "L",
+    "L": 1.0,
+    "b": 0.2,
+    "h": 0.1,
+    "a": 0.4,
+    "E": 1.0,
+    "rho": 1.0,
+    "nu": 0.29
+  },
+  "reference": "p5_reference_e31_lb04",
+  "ref_level": [
+    80,
+    16,
+    8
+  ],
+  "fit_grid": [
+    18,
+    9,
+    7
+  ],
+  "check_grids": [
+    [
+      42,
+      12,
+      12
+    ],
+    [
+      112,
+      32,
+      32
+    ]
+  ],
+  "deflate": {
+    "npz": "/work/docs/_generated/data/paper4/p5_params_e31_lb04_fp.npz",
+    "cond": "mc",
+    "n": 5,
+    "grid": [
+      42,
+      12,
+      12
+    ],
+    "width": 128,
+    "depth": 5
+  },
+  "launch": {
+    "git_sha": "e14da7a0b129c07f00fd0ede11d051c1e1596f37",
+    "git_dirty": false,
+    "timestamp_utc": "2026-11-11T08:43:52.873450+00:00"
+  },
+  "params": "p5_params_e31q_lb04_m7.npz",
+  "loss": "(1 - mass MAC) + (1 - energy MAC) against the FEM reference mode",
+  "e_lam_median": 0.0014628251518991949,
+  "rule": 0.05,
+  "verdict": "e_optimization",
+  "one_sided": "a median at or above the rule is indeterminate, not evidence that the trial space cannot hold the mode: the FEM reference is C0 and a smooth trial function cannot match it exactly",
+  "reference_floor_e_lam": 0.002406979284133911,
+  "Lam_fem_on_audit_grid": 1.6760815373800326,
+  "seconds": 10159.00219780812,
+  "added": "2026-09-10, E1"
+}

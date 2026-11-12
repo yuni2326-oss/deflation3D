@@ -1,0 +1,760 @@
+{
+  "stages": {
+    "1": {
+      "choice": {
+        "0": "first",
+        "1": "first",
+        "2": "first",
+        "3": "first",
+        "4": "first",
+        "5": "first",
+        "6": "first",
+        "7": "first",
+        "8": "first",
+        "9": "first",
+        "10": "first",
+        "11": "first",
+        "12": "first",
+        "13": "first",
+        "14": "first",
+        "15": "first",
+        "16": "first",
+        "17": "first",
+        "18": "first",
+        "19": "first"
+      },
+      "candidates": {
+        "first": "e26_cc_mc",
+        "norm": "e28_cc_s1_norm"
+      },
+      "eligible": {
+        "0": [
+          "first",
+          "norm"
+        ],
+        "1": [
+          "first",
+          "norm"
+        ],
+        "2": [
+          "first",
+          "norm"
+        ],
+        "3": [
+          "first",
+          "norm"
+        ],
+        "4": [
+          "first",
+          "norm"
+        ],
+        "5": [
+          "first",
+          "norm"
+        ],
+        "6": [
+          "first",
+          "norm"
+        ],
+        "7": [
+          "first",
+          "norm"
+        ],
+        "8": [
+          "first",
+          "norm"
+        ],
+        "9": [
+          "first",
+          "norm"
+        ],
+        "10": [
+          "first",
+          "norm"
+        ],
+        "11": [
+          "first",
+          "norm"
+        ],
+        "12": [
+          "first",
+          "norm"
+        ],
+        "13": [
+          "first",
+          "norm"
+        ],
+        "14": [
+          "first",
+          "norm"
+        ],
+        "15": [
+          "first",
+          "norm"
+        ],
+        "16": [
+          "first",
+          "norm"
+        ],
+        "17": [
+          "first",
+          "norm"
+        ],
+        "18": [
+          "first",
+          "norm"
+        ],
+        "19": [
+          "first",
+          "norm"
+        ]
+      },
+      "rule": "per seed, the candidate of lowest audit eigenvalue among those whose ladder tail spread is at most 1e-3 (ties broken by candidate order; if none is stable, lowest audit eigenvalue overall); no reference is read; restricted per seed to its eligible paths (round 2 adds the Fourier and held-rate paths only at the seed's flagged stage j*)"
+    },
+    "2": {
+      "choice": {
+        "0": "first",
+        "1": "first",
+        "2": "first",
+        "3": "first",
+        "4": "norm",
+        "5": "norm",
+        "6": "first",
+        "7": "norm",
+        "8": "first",
+        "9": "norm",
+        "10": "norm",
+        "11": "first",
+        "12": "norm",
+        "13": "first",
+        "14": "norm",
+        "15": "first",
+        "16": "norm",
+        "17": "norm",
+        "18": "first",
+        "19": "first"
+      },
+      "candidates": {
+        "first": "e30_cc_r1_s2_first",
+        "norm": "e30_cc_r1_s2_norm"
+      },
+      "eligible": {
+        "0": [
+          "first",
+          "norm"
+        ],
+        "1": [
+          "first",
+          "norm"
+        ],
+        "2": [
+          "first",
+          "norm"
+        ],
+        "3": [
+          "first",
+          "norm"
+        ],
+        "4": [
+          "first",
+          "norm"
+        ],
+        "5": [
+          "first",
+          "norm"
+        ],
+        "6": [
+          "first",
+          "norm"
+        ],
+        "7": [
+          "first",
+          "norm"
+        ],
+        "8": [
+          "first",
+          "norm"
+        ],
+        "9": [
+          "first",
+          "norm"
+        ],
+        "10": [
+          "first",
+          "norm"
+        ],
+        "11": [
+          "first",
+          "norm"
+        ],
+        "12": [
+          "first",
+          "norm"
+        ],
+        "13": [
+          "first",
+          "norm"
+        ],
+        "14": [
+          "first",
+          "norm"
+        ],
+        "15": [
+          "first",
+          "norm"
+        ],
+        "16": [
+          "first",
+          "norm"
+        ],
+        "17": [
+          "first",
+          "norm"
+        ],
+        "18": [
+          "first",
+          "norm"
+        ],
+        "19": [
+          "first",
+          "norm"
+        ]
+      },
+      "rule": "per seed, the candidate of lowest audit eigenvalue among those whose ladder tail spread is at most 1e-3 (ties broken by candidate order; if none is stable, lowest audit eigenvalue overall); no reference is read; restricted per seed to its eligible paths (round 2 adds the Fourier and held-rate paths only at the seed's flagged stage j*)"
+    },
+    "3": {
+      "choice": {
+        "0": "norm",
+        "1": "norm",
+        "2": "norm",
+        "3": "norm",
+        "4": "norm",
+        "5": "first",
+        "6": "norm",
+        "7": "norm",
+        "8": "norm",
+        "9": "norm",
+        "10": "norm",
+        "11": "norm",
+        "12": "norm",
+        "13": "norm",
+        "14": "norm",
+        "15": "norm",
+        "16": "norm",
+        "17": "norm",
+        "18": "norm",
+        "19": "first"
+      },
+      "candidates": {
+        "first": "e30_cc_r1_s3_first",
+        "norm": "e30_cc_r1_s3_norm"
+      },
+      "eligible": {
+        "0": [
+          "first",
+          "norm"
+        ],
+        "1": [
+          "first",
+          "norm"
+        ],
+        "2": [
+          "first",
+          "norm"
+        ],
+        "3": [
+          "first",
+          "norm"
+        ],
+        "4": [
+          "first",
+          "norm"
+        ],
+        "5": [
+          "first",
+          "norm"
+        ],
+        "6": [
+          "first",
+          "norm"
+        ],
+        "7": [
+          "first",
+          "norm"
+        ],
+        "8": [
+          "first",
+          "norm"
+        ],
+        "9": [
+          "first",
+          "norm"
+        ],
+        "10": [
+          "first",
+          "norm"
+        ],
+        "11": [
+          "first",
+          "norm"
+        ],
+        "12": [
+          "first",
+          "norm"
+        ],
+        "13": [
+          "first",
+          "norm"
+        ],
+        "14": [
+          "first",
+          "norm"
+        ],
+        "15": [
+          "first",
+          "norm"
+        ],
+        "16": [
+          "first",
+          "norm"
+        ],
+        "17": [
+          "first",
+          "norm"
+        ],
+        "18": [
+          "first",
+          "norm"
+        ],
+        "19": [
+          "first",
+          "norm"
+        ]
+      },
+      "rule": "per seed, the candidate of lowest audit eigenvalue among those whose ladder tail spread is at most 1e-3 (ties broken by candidate order; if none is stable, lowest audit eigenvalue overall); no reference is read; restricted per seed to its eligible paths (round 2 adds the Fourier and held-rate paths only at the seed's flagged stage j*)"
+    },
+    "4": {
+      "choice": {
+        "0": "norm",
+        "1": "first",
+        "2": "first",
+        "3": "first",
+        "4": "first",
+        "5": "first",
+        "6": "first",
+        "7": "first",
+        "8": "first",
+        "9": "first",
+        "10": "norm",
+        "11": "first",
+        "12": "first",
+        "13": "first",
+        "14": "first",
+        "15": "first",
+        "16": "first",
+        "17": "first",
+        "18": "first",
+        "19": "norm"
+      },
+      "candidates": {
+        "first": "e30_cc_r1_s4_first",
+        "norm": "e30_cc_r1_s4_norm"
+      },
+      "eligible": {
+        "0": [
+          "first",
+          "norm"
+        ],
+        "1": [
+          "first",
+          "norm"
+        ],
+        "2": [
+          "first",
+          "norm"
+        ],
+        "3": [
+          "first",
+          "norm"
+        ],
+        "4": [
+          "first",
+          "norm"
+        ],
+        "5": [
+          "first",
+          "norm"
+        ],
+        "6": [
+          "first",
+          "norm"
+        ],
+        "7": [
+          "first",
+          "norm"
+        ],
+        "8": [
+          "first",
+          "norm"
+        ],
+        "9": [
+          "first",
+          "norm"
+        ],
+        "10": [
+          "first",
+          "norm"
+        ],
+        "11": [
+          "first",
+          "norm"
+        ],
+        "12": [
+          "first",
+          "norm"
+        ],
+        "13": [
+          "first",
+          "norm"
+        ],
+        "14": [
+          "first",
+          "norm"
+        ],
+        "15": [
+          "first",
+          "norm"
+        ],
+        "16": [
+          "first",
+          "norm"
+        ],
+        "17": [
+          "first",
+          "norm"
+        ],
+        "18": [
+          "first",
+          "norm"
+        ],
+        "19": [
+          "first",
+          "norm"
+        ]
+      },
+      "rule": "per seed, the candidate of lowest audit eigenvalue among those whose ladder tail spread is at most 1e-3 (ties broken by candidate order; if none is stable, lowest audit eigenvalue overall); no reference is read; restricted per seed to its eligible paths (round 2 adds the Fourier and held-rate paths only at the seed's flagged stage j*)"
+    },
+    "5": {
+      "choice": {
+        "0": "first",
+        "1": "first",
+        "2": "norm",
+        "3": "first",
+        "4": "first",
+        "5": "norm",
+        "6": "first",
+        "7": "first",
+        "8": "norm",
+        "9": "norm",
+        "10": "first",
+        "11": "first",
+        "12": "first",
+        "13": "first",
+        "14": "norm",
+        "15": "first",
+        "16": "first",
+        "17": "first",
+        "18": "first",
+        "19": "first"
+      },
+      "candidates": {
+        "first": "e30_cc_r1_s5_first",
+        "norm": "e30_cc_r1_s5_norm"
+      },
+      "eligible": {
+        "0": [
+          "first",
+          "norm"
+        ],
+        "1": [
+          "first",
+          "norm"
+        ],
+        "2": [
+          "first",
+          "norm"
+        ],
+        "3": [
+          "first",
+          "norm"
+        ],
+        "4": [
+          "first",
+          "norm"
+        ],
+        "5": [
+          "first",
+          "norm"
+        ],
+        "6": [
+          "first",
+          "norm"
+        ],
+        "7": [
+          "first",
+          "norm"
+        ],
+        "8": [
+          "first",
+          "norm"
+        ],
+        "9": [
+          "first",
+          "norm"
+        ],
+        "10": [
+          "first",
+          "norm"
+        ],
+        "11": [
+          "first",
+          "norm"
+        ],
+        "12": [
+          "first",
+          "norm"
+        ],
+        "13": [
+          "first",
+          "norm"
+        ],
+        "14": [
+          "first",
+          "norm"
+        ],
+        "15": [
+          "first",
+          "norm"
+        ],
+        "16": [
+          "first",
+          "norm"
+        ],
+        "17": [
+          "first",
+          "norm"
+        ],
+        "18": [
+          "first",
+          "norm"
+        ],
+        "19": [
+          "first",
+          "norm"
+        ]
+      },
+      "rule": "per seed, the candidate of lowest audit eigenvalue among those whose ladder tail spread is at most 1e-3 (ties broken by candidate order; if none is stable, lowest audit eigenvalue overall); no reference is read; restricted per seed to its eligible paths (round 2 adds the Fourier and held-rate paths only at the seed's flagged stage j*)"
+    },
+    "6": {
+      "choice": {
+        "0": "first",
+        "1": "first",
+        "2": "first",
+        "3": "norm",
+        "4": "first",
+        "5": "first",
+        "6": "first",
+        "7": "first",
+        "8": "norm",
+        "9": "norm",
+        "10": "norm",
+        "11": "first",
+        "12": "first",
+        "13": "first",
+        "14": "first",
+        "15": "first",
+        "16": "first",
+        "17": "first",
+        "18": "first",
+        "19": "first"
+      },
+      "candidates": {
+        "first": "e30_cc_r1_s6_first",
+        "norm": "e30_cc_r1_s6_norm"
+      },
+      "eligible": {
+        "0": [
+          "first",
+          "norm"
+        ],
+        "1": [
+          "first",
+          "norm"
+        ],
+        "2": [
+          "first",
+          "norm"
+        ],
+        "3": [
+          "first",
+          "norm"
+        ],
+        "4": [
+          "first",
+          "norm"
+        ],
+        "5": [
+          "first",
+          "norm"
+        ],
+        "6": [
+          "first",
+          "norm"
+        ],
+        "7": [
+          "first",
+          "norm"
+        ],
+        "8": [
+          "first",
+          "norm"
+        ],
+        "9": [
+          "first",
+          "norm"
+        ],
+        "10": [
+          "first",
+          "norm"
+        ],
+        "11": [
+          "first",
+          "norm"
+        ],
+        "12": [
+          "first",
+          "norm"
+        ],
+        "13": [
+          "first",
+          "norm"
+        ],
+        "14": [
+          "first",
+          "norm"
+        ],
+        "15": [
+          "first",
+          "norm"
+        ],
+        "16": [
+          "first",
+          "norm"
+        ],
+        "17": [
+          "first",
+          "norm"
+        ],
+        "18": [
+          "first",
+          "norm"
+        ],
+        "19": [
+          "first",
+          "norm"
+        ]
+      },
+      "rule": "per seed, the candidate of lowest audit eigenvalue among those whose ladder tail spread is at most 1e-3 (ties broken by candidate order; if none is stable, lowest audit eigenvalue overall); no reference is read; restricted per seed to its eligible paths (round 2 adds the Fourier and held-rate paths only at the seed's flagged stage j*)"
+    },
+    "7": {
+      "choice": {
+        "0": "first",
+        "1": "first",
+        "2": "first",
+        "3": "first",
+        "4": "first",
+        "5": "first",
+        "6": "first",
+        "7": "first",
+        "8": "first",
+        "9": "first",
+        "10": "first",
+        "11": "first",
+        "12": "first",
+        "13": "first",
+        "14": "first",
+        "15": "first",
+        "16": "first",
+        "17": "first",
+        "18": "first",
+        "19": "first"
+      },
+      "candidates": {
+        "first": "e30_cc_r1_s7_first"
+      },
+      "eligible": {
+        "0": [
+          "first"
+        ],
+        "1": [
+          "first"
+        ],
+        "2": [
+          "first"
+        ],
+        "3": [
+          "first"
+        ],
+        "4": [
+          "first"
+        ],
+        "5": [
+          "first"
+        ],
+        "6": [
+          "first"
+        ],
+        "7": [
+          "first"
+        ],
+        "8": [
+          "first"
+        ],
+        "9": [
+          "first"
+        ],
+        "10": [
+          "first"
+        ],
+        "11": [
+          "first"
+        ],
+        "12": [
+          "first"
+        ],
+        "13": [
+          "first"
+        ],
+        "14": [
+          "first"
+        ],
+        "15": [
+          "first"
+        ],
+        "16": [
+          "first"
+        ],
+        "17": [
+          "first"
+        ],
+        "18": [
+          "first"
+        ],
+        "19": [
+          "first"
+        ]
+      },
+      "rule": "per seed, the candidate of lowest audit eigenvalue among those whose ladder tail spread is at most 1e-3 (ties broken by candidate order; if none is stable, lowest audit eigenvalue overall); no reference is read; restricted per seed to its eligible paths (round 2 adds the Fourier and held-rate paths only at the seed's flagged stage j*)"
+    }
+  }
+}

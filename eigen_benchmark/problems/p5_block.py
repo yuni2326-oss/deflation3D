@@ -70,6 +70,10 @@ def _is_bilayer(g) -> bool:
     return g is not None and g.get("kind") == "bilayer"
 
 
+def _is_t(g) -> bool:
+    return g is not None and g.get("kind") == "T"
+
+
 def young_at(pts, g):
     """점마다의 영률. 두 층 구조(E22)는 z < h/2에서 E, 그 위에서 E_top이다. 그 밖의 구조는
     커밋된 산술이 그대로이도록 float 하나를 돌려준다."""
@@ -101,6 +105,28 @@ def l_blocks(nx: int, ny: int, nz: int, g) -> list:
     if n2 > 0:
         out.append(((L - b, b, 0.0), (L, b + a, h), (ny, n2, nz)))
     return out
+
+
+def t_blocks(nx: int, ny: int, nz: int, g) -> list:
+    """T-브래킷(E25)을 상자 넷으로: 줄기 [0, L−b]×[0, b], 접합 [L−b, L]×[0, b], 두 날개 [L−b, L]×[−a, 0]과
+    [L−b, L]×[b, b+a], 두께 [0, h]. 줄기의 끝 x = 0이 고정면이고 날개는 자유단에 붙는다. 반환 [(lo, hi, (nx, ny, nz))].
+
+    L-브래킷(`l_blocks`)과 같은 규약이다 — (nx, ny, nz)는 줄기 길이 방향·폭·두께의 요소 수이고 평면 안에서 Δx = Δy를
+    강제하므로 nx = ny·L/b, 날개 길이 a는 요소 크기의 정수배여야 한다. 줄기를 y ∈ [0, b]에 두어 상자 구조와 같은 폭
+    방향 표본선(대칭 판정)이 줄기 안에 놓인다."""
+    L, b, h, a = (float(g[k]) for k in ("L", "b", "h", "a"))
+    d = b / ny
+    if abs(nx * d - L) > 1e-12 * L:
+        raise ValueError(f"T-브래킷은 Δx = Δy여야 합니다: nx = ny·L/b = {L / d:g}")
+    counts = {"stem": (L - b) / d, "flange": a / d}
+    for k, v in counts.items():
+        if abs(v - round(v)) > 1e-9 or round(v) < 1:
+            raise ValueError(f"{k} 길이가 요소 크기의 양의 정수배가 아니다: {v:g}")
+    n1, n2 = int(round(counts["stem"])), int(round(counts["flange"]))
+    return [((0.0, 0.0, 0.0), (L - b, b, h), (n1, ny, nz)),
+            ((L - b, 0.0, 0.0), (L, b, h), (ny, ny, nz)),
+            ((L - b, -a, 0.0), (L, 0.0, h), (ny, n2, nz)),
+            ((L - b, b, 0.0), (L, b + a, h), (ny, n2, nz))]
 
 
 def build_mesh_blocks(blocks) -> dict:
@@ -151,6 +177,8 @@ def build_mesh(nx: int, ny: int, nz: int, geometry=None) -> dict:
         raise ValueError("요소 수는 축마다 1 이상이어야 합니다")
     if _is_l(geometry):
         return build_mesh_blocks(l_blocks(nx, ny, nz, geometry))
+    if _is_t(geometry):
+        return build_mesh_blocks(t_blocks(nx, ny, nz, geometry))
     if _is_bilayer(geometry) and nz % 2:
         raise ValueError(f"두 층 구조는 계면 z = h/2가 요소면이어야 한다(n_z 짝수): n_z = {nz}")
     g = P5_GEOMETRY if geometry is None else geometry
@@ -608,11 +636,26 @@ def l_grid_blocks(grid, g) -> list:
     return out
 
 
+def t_grid_blocks(grid, g) -> list:
+    """T-브래킷의 구적 블록. grid = (nL, nW, nT)는 L-브래킷과 같은 뜻이다: 줄기의 길이 방향은 단위 길이당 nL점(올림),
+    폭은 nW점, 두께는 nT점, 접합 블록은 nW × nW. **날개의 길이 방향은 max(nW, ⌈nL·a⌉)점**이다 — 날개는 짧아(a = 0.25)
+    단위 길이당 규칙으로는 3–4점이 되어 인증 장(폭 방향 파수 m_y π/b)을 담지 못한다(감사 격자 인증 오차 2.6 × 10⁻²).
+    폭보다 성기지 않게 두면 날개 블록은 접합 블록과 같은 해상도가 된다. 반환 [(lo, hi, (n_x, n_y, n_z))]."""
+    nL, nW, nT = (int(v) for v in grid)
+    L, b, h, a = (float(g[k]) for k in ("L", "b", "h", "a"))
+    up = lambda x: max(1, int(np.ceil(x - 1e-9)))
+    nf = max(nW, up(nL * a))
+    return [((0.0, 0.0, 0.0), (L - b, b, h), (up(nL * (L - b)), nW, nT)),
+            ((L - b, 0.0, 0.0), (L, b, h), (nW, nW, nT)),
+            ((L - b, -a, 0.0), (L, 0.0, h), (nW, nf, nT)),
+            ((L - b, b, 0.0), (L, b + a, h), (nW, nf, nT))]
+
+
 def _tensor_grid(grid, geometry=None):
     g = P5_GEOMETRY if geometry is None else geometry
-    if _is_l(g):
+    if _is_l(g) or _is_t(g):
         P, Wt = [], []
-        for lo, hi_, n in l_grid_blocks(grid, g):
+        for lo, hi_, n in (l_grid_blocks(grid, g) if _is_l(g) else t_grid_blocks(grid, g)):
             axes, wts = [], []
             for k in range(3):
                 p, w = gauss_legendre(int(n[k]), float(lo[k]), float(hi_[k]))

@@ -365,7 +365,8 @@ def test_render_blocks_tile_the_l_bracket_and_keep_the_box_grid():
 def test_extra_atlas_reads_its_labels_from_the_committed_reference():
     """두 구조의 성격·지배 성분·Λ*는 원고 4.7절이 인용한 구조 참조에서 온다 — 도감이 따로 정하지 않는다."""
     assert run_p5.EXTRA_ATLAS == {"e21_lbracket": "p5_reference_e21_lbracket",
-                                  "e22_bilayer": "p5_reference_e22_bilayer"}
+                                  "e22_bilayer": "p5_reference_e22_bilayer",
+                                  "e25_tbracket": "p5_reference_e25_tbracket"}
 
 
 def test_committed_extra_atlas_agrees_with_its_reference():
@@ -387,7 +388,8 @@ def test_committed_extra_atlas_agrees_with_its_reference():
 
 
 @pytest.mark.parametrize("tag,levels", [("e21_lbracket", ((20, 4, 2), (10, 2, 1))),
-                                        ("e22_bilayer", ((12, 4, 2), (6, 2, 2)))])
+                                        ("e22_bilayer", ((12, 4, 2), (6, 2, 2))),
+                                        ("e25_tbracket", ((20, 4, 2), (20, 4, 2)))])
 def test_extra_atlas_writes_shapes_for_every_render_point(tmp_path, tag, levels):
     """성긴 두 단으로 끝까지 돌려 산출물의 모양을 지킨다(커밋 산출물은 참조 사다리의 위 두 단)."""
     out = run_p5.extra_atlas(tag, outdir=str(tmp_path), levels=levels)
@@ -397,3 +399,12 @@ def test_extra_atlas_writes_shapes_for_every_render_point(tmp_path, tag, levels)
     assert len(rows) == 4 * n_pts and {int(r["block"]) for r in rows} == set(range(len(out["render_blocks"])))
     with open(os.path.join(str(tmp_path), f"p5_mode_atlas_{tag}.json"), encoding="utf-8") as f:
         assert json.load(f)["level"] == list(levels[0])
+
+
+
+def test_render_blocks_tile_the_t_bracket_with_its_two_flanges():
+    """E25 — 렌더 블록은 `p5_block.t_blocks`와 같은 순서의 상자 넷이다."""
+    g = {"kind": "T", "L": 1.0, "b": 0.2, "h": 0.1, "a": 0.25, "E": 1.0, "rho": 1.0, "nu": 0.29}
+    blocks = run_p5.render_blocks(g)
+    assert [tuple(b[0]) for b in blocks] == [(0.0, 0.0, 0.0), (0.8, 0.0, 0.0), (0.8, -0.25, 0.0), (0.8, 0.2, 0.0)]
+    assert [tuple(b[1]) for b in blocks] == [(0.8, 0.2, 0.1), (1.0, 0.2, 0.1), (1.0, 0.0, 0.1), (1.0, 0.45, 0.1)]

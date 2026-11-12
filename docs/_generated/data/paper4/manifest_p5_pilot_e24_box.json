@@ -1,0 +1,56 @@
+{
+  "git_sha": "d7e69a7dc328f3d1f9820ce7edfd3aa46d26729f",
+  "git_branch": "unknown",
+  "git_dirty": true,
+  "timestamp_utc": "2026-10-16T19:51:20.597073+00:00",
+  "python": "3.12.3",
+  "numpy": "2.1.0",
+  "scipy": "1.17.1",
+  "mpmath": "1.3.0",
+  "platform": "Linux 6.17.0-1021-nvidia aarch64",
+  "precision": "fp64 + mpmath dps=50",
+  "driver": "run_p5_neural.e24_pilot",
+  "structure": "box",
+  "launch": {
+    "git_sha": "d7e69a7dc328f3d1f9820ce7edfd3aa46d26729f",
+    "git_dirty": false,
+    "timestamp_utc": "2026-10-16T17:41:29.682446+00:00"
+  },
+  "quick": false,
+  "seed_base": 9001,
+  "n_seeds": 4,
+  "n_modes": 2,
+  "iters": 20000,
+  "settings": {
+    "arms": [
+      "penalty"
+    ],
+    "control": false,
+    "solver": "strong",
+    "boundary_points": 600,
+    "gram_offdiag": true,
+    "per_seed_span": true,
+    "save_params": true,
+    "save_hist": true,
+    "tag": "e24_pinn_box",
+    "check_grids": [
+      [
+        40,
+        20,
+        15
+      ],
+      [
+        60,
+        30,
+        24
+      ],
+      [
+        80,
+        40,
+        30
+      ]
+    ]
+  },
+  "geometry": null,
+  "role": "pilot on calibration seeds; not used for judgment"
+}
